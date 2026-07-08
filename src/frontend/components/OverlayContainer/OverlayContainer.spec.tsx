@@ -8,10 +8,16 @@ vi.mock('../../WidgetIndex', () => ({
 vi.mock('@irdashies/context', () => ({
   useDashboard: vi.fn(),
   useRunningState: vi.fn(),
+  usePushToPassStoreUpdater: vi.fn(),
   useResetOnDisconnect: vi.fn(),
+  usePitLapStoreUpdater: vi.fn(),
 }));
 vi.mock('../TrackMap/hooks/useSectorTiming', () => ({
   useSectorTiming: vi.fn(),
+}));
+vi.mock('../Standings/hooks', () => ({
+  useStandingsSettings: vi.fn(),
+  useRelativeSettings: vi.fn(),
 }));
 
 import { useDashboard, useRunningState } from '@irdashies/context';

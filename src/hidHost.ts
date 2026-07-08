@@ -10,23 +10,29 @@
  * connected devices without a chooser or a user gesture.
  */
 import logger from '@irdashies/utils/logger';
-import { gamepadTokenFromIndex } from '@irdashies/types';
+import { gamepadTokenFromIndex, gamepadTokenFromHat } from '@irdashies/shared';
+import type { ButtonBit, HatField, HatDirection } from '@irdashies/types';
 import {
   parseButtons,
-  buttonEdges,
+  parseHats,
+  buttonChanges,
+  hatChanges,
   describeCollections,
-  type ButtonBit,
 } from './app/gamepad/hidReport';
 
 interface DeviceState {
   buttons: ButtonBit[];
+  hats: HatField[];
   pressed: Map<number, boolean>;
+  hatState: Map<number, HatDirection | null>;
 }
 
 const devices = new Map<HIDDevice, DeviceState>();
 
+/** Open a HID device (if not already), parse its controls, and relay press edges. */
 async function openDevice(device: HIDDevice): Promise<void> {
   if (devices.has(device)) return;
+
   try {
     if (!device.opened) await device.open();
   } catch (err) {
@@ -35,35 +41,50 @@ async function openDevice(device: HIDDevice): Promise<void> {
   }
 
   const buttons = parseButtons(device.collections);
-  const state: DeviceState = { buttons, pressed: new Map() };
+  const hats = parseHats(device.collections);
+  const state: DeviceState = {
+    buttons,
+    hats,
+    pressed: new Map(),
+    hatState: new Map(),
+  };
   devices.set(device, state);
 
-  if (buttons.length === 0) {
+  if (buttons.length === 0 && hats.length === 0) {
     logger.warn(
-      `[Gamepad] ${device.productName} opened but no buttons detected. ` +
+      `[Gamepad] ${device.productName} opened but no controls detected. ` +
         `Report layout:\n${describeCollections(device.collections)}`
     );
   }
 
   device.addEventListener('inputreport', (event) => {
-    const edges = buttonEdges(
+    for (const change of buttonChanges(
       event.data,
       state.buttons,
       event.reportId,
       state.pressed
-    );
-    for (const index of edges) {
+    )) {
       window.gamepadHost?.sendButton(
-        gamepadTokenFromIndex(index, device.productName)
+        gamepadTokenFromIndex(change.index, device.productName),
+        change.down
+      );
+    }
+
+    for (const change of hatChanges(
+      event.data,
+      state.hats,
+      event.reportId,
+      state.hatState
+    )) {
+      window.gamepadHost?.sendButton(
+        gamepadTokenFromHat(change.index, change.direction, device.productName),
+        change.down
       );
     }
   });
 }
 
-function forgetDevice(device: HIDDevice): void {
-  devices.delete(device);
-}
-
+/** Wire hotplug listeners and open every controller already connected at startup. */
 async function start(): Promise<void> {
   if (!navigator.hid) {
     logger.error('[Gamepad] WebHID (navigator.hid) is unavailable');
@@ -71,15 +92,16 @@ async function start(): Promise<void> {
   }
 
   navigator.hid.addEventListener('connect', (event) => {
+    logger.info(`[Gamepad] hid device connected: ${event.device.productName}`);
     void openDevice(event.device);
   });
   navigator.hid.addEventListener('disconnect', (event) => {
-    forgetDevice(event.device);
+    devices.delete(event.device);
   });
 
   const available = await navigator.hid.getDevices();
   if (available.length === 0) {
-    logger.warn('[Gamepad] getDevices() returned no controllers');
+    logger.info('[Gamepad] getDevices() returned no controllers');
   }
   for (const device of available) {
     await openDevice(device);

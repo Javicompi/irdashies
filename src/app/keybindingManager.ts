@@ -2,28 +2,34 @@ import { globalShortcut, desktopCapturer } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { KeybindingActionId, KeybindingsMap } from '@irdashies/types';
-import { isGamepadBinding } from '@irdashies/types';
+import {
+  isGamepadBinding,
+  isWidgetToggleActionId,
+  nextProfileIndex,
+  widgetIdFromToggleActionId,
+} from '@irdashies/shared';
 import { getKeybindings } from './storage/keybindings';
 import { OverlayManager } from './overlayManager';
 import logger from './logger';
-import type { GamepadHost } from './gamepad/gamepadHost';
+import { GamepadManager } from './gamepad/gamepadManager';
 
 export class KeybindingManager {
   private bindings: KeybindingsMap;
   private actionHandlers: Map<KeybindingActionId, () => void>;
   private hideState = false;
+  /** Widget instance ids currently hidden via a per-widget toggle (session only). */
+  private hiddenWidgets = new Set<string>();
 
-  /** Lazily-created WebHID host window manager (see startGamepad). */
-  private gamepad?: GamepadHost;
-  /** Gamepad token (e.g. "gamepad:btn0") -> action it triggers. */
-  private gamepadMap = new Map<string, KeybindingActionId>();
-  /** When set, captured gamepad presses are reported here instead of triggering actions (rebinding). */
-  private captureCb?: (token: string) => void;
+  /** Owns the gamepad token -> action map, capture mode, and WebHID host. */
+  private gamepad: GamepadManager;
 
   constructor(private overlayManager: OverlayManager) {
     this.bindings = getKeybindings();
     this.actionHandlers = new Map();
     this.setupActionHandlers();
+    this.gamepad = new GamepadManager((actionId) =>
+      this.triggerAction(actionId)
+    );
   }
 
   private setupActionHandlers(): void {
@@ -42,13 +48,51 @@ export class KeybindingManager {
       this.saveTelemetry();
     });
 
+    this.actionHandlers.set('prev-profile', () => {
+      this.cycleProfile(-1);
+    });
+
+    this.actionHandlers.set('next-profile', () => {
+      this.cycleProfile(1);
+    });
+
     this.actionHandlers.set('recenter-vr', () => {
-      // Lazy import so the native VR addon is only loaded when actually used
-      // (keeps it out of the module graph for tests and non-VR sessions).
       import('./vr/vrOverlay')
         .then((m) => m.recenterVrOverlay())
         .catch((err) => logger.error('[VR] recenter failed', err));
     });
+  }
+
+  // ponytail: dynamic import keeps storage/dashboards out of the constructor's
+  // module graph (electron isn't fully mocked in keybinding unit tests).
+  private async cycleProfile(direction: 1 | -1): Promise<void> {
+    try {
+      const { listProfiles, getCurrentProfileId, setCurrentProfile } =
+        await import('./storage/dashboards');
+      const { getCycleProfiles } = await import('./storage/appSettings');
+
+      const profiles = listProfiles();
+      if (profiles.length < 2) return;
+
+      const currentId = getCurrentProfileId();
+      const currentIndex = profiles.findIndex((p) => p.id === currentId);
+      const cycle = getCycleProfiles();
+
+      const targetIndex = nextProfileIndex(
+        currentIndex,
+        profiles.length,
+        direction,
+        cycle
+      );
+      if (targetIndex === -1) return;
+
+      const target = profiles[targetIndex];
+      if (!target || target.id === currentId) return;
+
+      setCurrentProfile(target.id);
+    } catch (error) {
+      logger.error('Error switching profile via keybind:', error);
+    }
   }
 
   private async saveTelemetry(): Promise<void> {
@@ -88,18 +132,48 @@ export class KeybindingManager {
     }
   }
 
+  /**
+   * Resolve the handler for an action id. Static actions come from the handler
+   * map; dynamic `toggle-widget:<id>` actions hide/show that widget instance.
+   */
+  private resolveHandler(
+    actionId: KeybindingActionId
+  ): (() => void) | undefined {
+    if (isWidgetToggleActionId(actionId)) {
+      const widgetId = widgetIdFromToggleActionId(actionId);
+      return () => this.toggleWidgetHide(widgetId);
+    }
+    return this.actionHandlers.get(actionId);
+  }
+
+  /** Toggle the session-only hidden state of a single widget and broadcast it. */
+  private toggleWidgetHide(widgetId: string): void {
+    const hide = !this.hiddenWidgets.has(widgetId);
+    if (hide) {
+      this.hiddenWidgets.add(widgetId);
+    } else {
+      this.hiddenWidgets.delete(widgetId);
+    }
+    this.overlayManager.getOverlays().forEach(({ window }) => {
+      window.webContents.send('widget-toggle-hide', widgetId, hide);
+    });
+  }
+
   public getBindings(): KeybindingsMap {
     return this.bindings;
   }
 
   public registerAll(): void {
-    this.buildGamepadMap();
+    this.gamepad.syncBindings(this.bindings);
     for (const [actionId, entry] of Object.entries(this.bindings)) {
-      const handler = this.actionHandlers.get(actionId as KeybindingActionId);
+      // Unbound entries (empty accelerator) have nothing to register.
+      if (!entry.accelerator) continue;
+
+      const handler = this.resolveHandler(actionId as KeybindingActionId);
       if (!handler) continue;
 
-      // Gamepad bindings aren't global keyboard shortcuts; the GamepadHost
-      // routes them via buildGamepadMap() above.
+      // Gamepad bindings aren't global keyboard shortcuts; the GamepadManager
+      // routes them via syncBindings() above.
       if (isGamepadBinding(entry.accelerator)) continue;
 
       try {
@@ -139,65 +213,24 @@ export class KeybindingManager {
     }
   }
 
-  /** Rebuild the gamepad token -> action lookup from the current bindings. */
-  private buildGamepadMap(): void {
-    this.gamepadMap.clear();
-    for (const [actionId, entry] of Object.entries(this.bindings)) {
-      if (isGamepadBinding(entry.accelerator)) {
-        this.gamepadMap.set(entry.accelerator, actionId as KeybindingActionId);
-      }
-    }
-  }
-
-  /**
-   * Route a gamepad button-down (a `gamepad:btn<N>` token from the WebHID host)
-   * to capture (rebinding) or to its bound action.
-   */
-  private handleGamepadButton(token: string): void {
-    if (this.captureCb) {
-      this.captureCb(token);
-      return;
-    }
-    const actionId = this.gamepadMap.get(token);
-    if (actionId) this.triggerAction(actionId);
-  }
-
-  /**
-   * Start reading game controllers. Lazily creates the hidden WebHID host
-   * window so its module stays out of the graph for tests; failures are logged
-   * and leave keyboard bindings working.
-   */
+  /** Start reading game controllers (see {@link GamepadManager.start}). */
   public startGamepad(): void {
-    if (this.gamepad) {
-      this.gamepad.start((token) => this.handleGamepadButton(token));
-      return;
-    }
-    import('./gamepad/gamepadHost')
-      .then(({ GamepadHost }) => {
-        this.gamepad = new GamepadHost();
-        this.gamepad.start((token) => this.handleGamepadButton(token));
-      })
-      .catch((err) =>
-        logger.error(
-          '[Gamepad] host unavailable, controller bindings disabled',
-          err
-        )
-      );
+    this.gamepad.start();
   }
 
   /** Tear down the WebHID host window (call on shutdown). */
   public stopGamepad(): void {
-    this.gamepad?.stop();
+    this.gamepad.stop();
   }
 
-  /** Enter capture mode: the next pad presses are reported to `cb` for rebinding. */
-  public startGamepadCapture(cb: (token: string) => void): void {
-    this.captureCb = cb;
+  /** Enter capture mode: the next pad presses are reported to `onCapture` for rebinding. */
+  public startGamepadCapture(onCapture: (token: string) => void): void {
+    this.gamepad.startCapture(onCapture);
   }
 
   /** Leave capture mode; pad presses resume triggering actions. */
   public stopGamepadCapture(): void {
-    this.captureCb = undefined;
+    this.gamepad.stopCapture();
   }
 
   /**
@@ -218,7 +251,7 @@ export class KeybindingManager {
   }
 
   public triggerAction(actionId: KeybindingActionId): void {
-    const handler = this.actionHandlers.get(actionId);
+    const handler = this.resolveHandler(actionId);
     if (handler) handler();
   }
 

@@ -55,6 +55,9 @@ overlayManager.setupHardwareAcceleration();
 overlayManager.setupSingleInstanceLock();
 overlayManager.setupAutoStart();
 
+// Hoisted so the quit handler can tear down the WebHID host window cleanly.
+let keybindingManager: KeybindingManager | undefined;
+
 app.on('ready', async () => {
   // Don't start services if we don't have the single instance lock
   // (this instance should be quitting)
@@ -88,8 +91,6 @@ app.on('ready', async () => {
   // Experimental native VR overlay (opt-in via IRDASHIES_VR=1).
   if (isVrOverlayEnabled()) {
     startVrOverlay(overlayManager, dashboard?.generalSettings?.vr);
-    // Push placement changes to the native layer in real time as the user
-    // edits the VR settings section.
     onDashboardUpdated((updated) => {
       applyVrOverlaySettings(updated.generalSettings?.vr);
     });
@@ -97,7 +98,7 @@ app.on('ready', async () => {
 
   keybindingManager = new KeybindingManager(overlayManager);
   keybindingManager.registerAll();
-  // Begin polling game controllers for any gamepad bindings (lazy-loads SDL).
+  // Start the WebHID host window that reads game controllers for gamepad bindings.
   keybindingManager.startGamepad();
 
   setupTaskbar(overlayManager, keybindingManager);
@@ -105,16 +106,6 @@ app.on('ready', async () => {
   setupKeybindingsBridge(keybindingManager);
 
   await analytics.init(overlayManager.getVersion(), dashboard);
-
-  // Check if settings window should start minimized
-  const shouldStartMinimized =
-    dashboard?.generalSettings?.startMinimized ?? false;
-  if (shouldStartMinimized) {
-    // Create the settings window but don't show it immediately
-    const settingsWindow = overlayManager.createSettingsWindow();
-    // Minimize it to system tray
-    settingsWindow.hide();
-  }
 });
 
 app.on('window-all-closed', () => {

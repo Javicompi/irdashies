@@ -1,75 +1,42 @@
 # Gamepad input (WebHID)
 
-Lets any keybinding be triggered by a game controller button as well as a
-keyboard shortcut. Bindings live in the existing **Settings → Key Bindings**
-list — click a binding to record, then press a key _or_ a controller button.
+Any keybinding fire from controller button too, not just keyboard. Bindings live in **Settings → Key Bindings**. Click binding to record, press key _or_ pad button.
 
-## Why WebHID (and not Electron's other options)
+Code-level detail (token grammar, permissions, parsing, hat decoding) live in the file-header JSDoc of `hidHost.ts`, `gamepadHost.ts`, `gamepadToken.ts`, `hidReport.ts`. This file only keep the design rationale that isn't obvious from the code.
 
-An iRacing overlay never holds focus — the sim does — so the input source has to
-deliver presses while the app is unfocused:
+## Why WebHID (not other Electron options)
 
-- The **main process** `globalShortcut` is keyboard-only.
-- The renderer's **W3C Gamepad API** (`navigator.getGamepads()`) only delivers
-  input while the window is focused → useless for an overlay.
-- **WebHID** (`navigator.hid`) keeps delivering input reports while unfocused,
-  is built into Chromium (no extra dependency / native build), and supports
-  hotplug via `connect` / `disconnect` events.
+iRacing overlay never hold focus — sim hold it. Input source must deliver presses while app unfocused:
 
-## How it works
+- Main process `globalShortcut`: keyboard only.
+- Renderer **W3C Gamepad API** (`navigator.getGamepads()`): delivers input only while window focused → useless for overlay.
+- **WebHID** (`navigator.hid`): keeps delivering input reports while unfocused. Built into Chromium (no extra dependency / native build). Hotplug via `connect` / `disconnect` events.
 
-WebHID runs in a renderer, but keybinding actions must fire even when no window
-is focused or open. So a dedicated, hidden, always-alive window hosts the HID
-reader and forwards presses to the main process, which triggers the bound
-action (reusing the same code path as keyboard shortcuts).
+So one hidden, always-alive window host the HID reader and forward presses to the main process, which fire the bound action through the same `triggerAction` path as keyboard shortcuts.
 
-```
-hidden HID-host window (WebHID)         main process
-  src/hidHost.ts                          gamepadHost.ts ── KeybindingManager
-  getDevices() → open → inputreport   →   ipc 'gamepad:button'  → triggerAction
-        │  parse button bits (hidReport.ts)        (or → capture during rebinding)
-        └─ window.gamepadHost.sendButton('gamepad:btn5')
-```
+## Why single-bit-only, no usage-page filter
 
-| File                      | Role                                                                                                                            |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `gamepadHost.ts`          | Main process. Creates the hidden window, auto-grants HID permission for its session, relays button tokens to KeybindingManager. |
-| `hidReport.ts`            | Pure helpers: locate button bits in a device's HID input reports and detect press edges. Unit tested.                           |
-| `../../hidHost.ts`        | The hidden renderer. Opens every HID device and emits `gamepad:btn<N>` tokens.                                                  |
-| `../keybindingManager.ts` | Maps gamepad tokens to actions; handles capture during rebinding.                                                               |
+`parseButtons` keep **every non-constant, single-bit field** — no usage-page filter.
 
-## Permissions (no chooser, no user gesture)
+- Many controllers and sim wheel bases (Thrustmaster, Fanatec, Simucube) declare buttons on a **vendor-defined** page (`0xFF00`+), not the standard Button page (`0x09`). Filtering by page drop those — exactly what broke a real Thrustmaster wheel. An unbound bit fire nothing (`GamepadManager` only trigger mapped tokens), so no need to guess which bits are "real" buttons.
+- Single-bit is the safety line. Analog axes are multi-bit (`reportSize > 1`), so a turned wheel or pressed pedal can't reach the binding map. The overlay run during a race — firing an action by accident (analog drift, a status flag toggling mid-corner) is worse than a missing feature.
 
-The main process scopes two handlers to the host window's own session partition
-(`hid-host`) so the default session every other window shares is untouched:
+## Button & d-pad combos (chords)
 
-- `setPermissionCheckHandler` → allow `hid`
-- `setDevicePermissionHandler` → allow `hid`
+A binding can be two or more controls held together — buttons, d-pad directions, or a mix, e.g. `gamepad:btn0+gamepad:hat0_up`. `GamepadManager` tracks every currently-held control token in a `Set`; on each press it canonicalizes the held set (sorted, joined by `+` — see `gamepadComboToken` in `gamepadToken.ts`) and looks that up directly. So a combo fires the instant its exact set of controls is held, and pressing one more unrelated control breaks the match — it is not "any superset", deliberately, to avoid one combo accidentally swallowing another that shares controls.
 
-With these, `navigator.hid.getDevices()` returns the connected controllers at
-startup without showing a device picker or requiring a click — so the hidden
-window can read input immediately.
+To record one: hold the controls together, then release any one of them — that release commits whatever was held as the new binding. A single press+release still binds a plain single-control accelerator (the one-control case of the same canonical-join logic), so existing single bindings are unaffected.
 
-## Tokens
+This needs a release edge per control to know what's still held: `buttonChanges` in `hidReport.ts` reports both press and release for buttons; `hatChanges` does the same for hat directions — rolling from one direction straight to another emits a release of the old direction and a press of the new one in the same report, and centering emits a release with no matching press.
 
-Every binding's stored value is either a keyboard accelerator (`"Alt+H"`) or a
-gamepad token. WebHID exposes controller buttons **by index**, not by name. The
-token also carries the device's (URL-encoded) product name when known, so the
-settings UI can label the binding with the device it came from:
+One consequence worth knowing: **no subset firing.** Holding A+B+C when only A+B is bound does not fire A+B. This keeps a 2-control and a 3-control combo that share controls unambiguous, at the cost of needing an exact match.
 
-| Token                     | Example                       | Display                  |
-| ------------------------- | ----------------------------- | ------------------------ |
-| `gamepad:<device>:btn<N>` | `gamepad:Logitech%20G29:btn5` | `Logitech G29: Button 5` |
-| `gamepad:btn<N>`          | `gamepad:btn5`                | `Pad: Button 5`          |
+## Hat switch (d-pad)
 
-Token helpers and validation live in `src/types/keybindings.ts`.
+Pads report the d-pad as one multi-bit **hat switch** (Generic Desktop usage `0x39`), not four bits, so `parseButtons` never see it. `parseHats` find it; `hatChanges` decode directions clockwise from the descriptor's logical minimum (= up), which handles both `0-7` and `1-8` pads.
 
-> Button indices are per device, in HID-report declaration order. A controller's
-> face button "A" and a wheel base's first button can both be `btn0`. With a
-> single controller this is unambiguous; with multiple HID devices their indices
-> share one namespace — a known limitation. (Re-record the binding by pressing
-> the actual button you want.)
->
-> Only digital buttons (HID Button usage page) are bound. Analog axes (steering,
-> pedals, triggers) and POV hats are intentionally ignored so axis movement
-> can't masquerade as a button press.
+> **Assumption left:** directions read clockwise from `logicalMin`. Matches every pad seen. A device ordering its hat differently would map wrong — fix point is the `HAT_DIRECTIONS` order in `hidReport.ts`.
+
+## Future
+
+Analog-axis binding need a different contract (threshold/deadzone/hysteresis + new token grammar e.g. `gamepad:axisRx+>0.5`). Deferred until concrete need — mapping a continuous axis to a discrete action is mostly an accidental-trigger generator.

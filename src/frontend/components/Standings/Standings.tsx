@@ -14,7 +14,7 @@ import {
 import {
   useGeneralSettings,
   useLapTimesStoreUpdater,
-  usePitLapStoreUpdater,
+  useP2PDisplayStates,
   useDrivingState,
   useWeekendInfoNumCarClasses,
   useWeekendInfoTeamRacing,
@@ -35,8 +35,8 @@ export const Standings = () => {
     !!(settings?.lapTimeDeltas?.enabled || settings?.avgLapTime?.enabled)
   );
 
-  // Update pit laps
-  usePitLapStoreUpdater();
+  const p2pDisplayStates = useP2PDisplayStates();
+
 
   const standings = useDriverStandings(settings);
   const classStats = useCarClassStats();
@@ -256,6 +256,7 @@ export const Standings = () => {
                         pitExitAfterSF={pitExitAfterSF}
                         hideCarManufacturer={hideCarManufacturer}
                         compactMode={generalSettings?.compactMode}
+                        p2pDisplayState={p2pDisplayStates[result.carIdx]}
                       />
                     </Fragment>
                   );

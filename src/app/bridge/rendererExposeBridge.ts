@@ -114,6 +114,18 @@ export function exposeBridge() {
     setAnalyticsOptOut: (optOut: boolean) => {
       return ipcRenderer.invoke('setAnalyticsOptOut', optOut);
     },
+    getCycleProfiles: () => {
+      return ipcRenderer.invoke('getCycleProfiles');
+    },
+    setCycleProfiles: (enabled: boolean) => {
+      return ipcRenderer.invoke('setCycleProfiles', enabled);
+    },
+    getShowProfileBanner: () => {
+      return ipcRenderer.invoke('getShowProfileBanner');
+    },
+    setShowProfileBanner: (enabled: boolean) => {
+      return ipcRenderer.invoke('setShowProfileBanner', enabled);
+    },
     // Profile management
     listProfiles: () => {
       return ipcRenderer.invoke('listProfiles');
@@ -250,8 +262,11 @@ export function exposeBridge() {
 
   contextBridge.exposeInMainWorld('keybindingsBridge', {
     getKeybindings: () => ipcRenderer.invoke('keybindings:get'),
-    updateKeybinding: (actionId: KeybindingActionId, accelerator: string) =>
-      ipcRenderer.invoke('keybindings:update', actionId, accelerator),
+    updateKeybinding: (
+      actionId: KeybindingActionId,
+      accelerator: string,
+      meta?: { label: string; description: string }
+    ) => ipcRenderer.invoke('keybindings:update', actionId, accelerator, meta),
     resetKeybinding: (actionId: KeybindingActionId) =>
       ipcRenderer.invoke('keybindings:reset', actionId),
     resetAllKeybindings: () => ipcRenderer.invoke('keybindings:resetAll'),
@@ -269,8 +284,9 @@ export function exposeBridge() {
   // Used only by the hidden WebHID host renderer (src/hidHost.ts) to forward
   // controller button presses to the main process.
   contextBridge.exposeInMainWorld('gamepadHost', {
-    sendButton: (token: string) => ipcRenderer.send('gamepad:button', token),
-  } as GamepadHostBridge);
+    sendButton: (token: string, down: boolean) =>
+      ipcRenderer.send('gamepad:button', token, down),
+  } satisfies GamepadHostBridge);
 
   contextBridge.exposeInMainWorld('personalBestBridge', {
     getPersonalBest: (trackId: string | number, carName: string) =>

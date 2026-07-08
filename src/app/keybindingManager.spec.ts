@@ -61,6 +61,18 @@ const bindingsWithBadAccelerator = (): KeybindingsMap => ({
     description: '',
     isDefault: true,
   },
+  'prev-profile': {
+    accelerator: 'Alt+PageUp',
+    label: 'Previous Profile',
+    description: '',
+    isDefault: true,
+  },
+  'next-profile': {
+    accelerator: 'Alt+PageDown',
+    label: 'Next Profile',
+    description: '',
+    isDefault: true,
+  },
   'recenter-vr': {
     accelerator: 'F8',
     label: 'Recenter VR Overlay',
@@ -177,12 +189,6 @@ describe('KeybindingManager', () => {
   });
 
   describe('gamepad bindings', () => {
-    const overlayWith = (toggleLockOverlays: () => void) =>
-      ({
-        getOverlays: () => [],
-        toggleLockOverlays,
-      }) as unknown as OverlayManager;
-
     const gamepadBinding = (): KeybindingsMap =>
       ({
         'toggle-edit-mode': {
@@ -193,15 +199,9 @@ describe('KeybindingManager', () => {
         },
       }) as unknown as KeybindingsMap;
 
-    // handleGamepadButton is private; the WebHID host callback is its only
-    // caller, passing a ready-made gamepad token.
-    const fireButton = (manager: KeybindingManager, token: string) =>
-      (
-        manager as unknown as {
-          handleGamepadButton: (token: string) => void;
-        }
-      ).handleGamepadButton(token);
-
+    // The token -> action routing, capture mode, and host lifecycle now live in
+    // GamepadManager (see gamepadManager.spec.ts). KeybindingManager only has to
+    // keep gamepad bindings out of the global keyboard-shortcut registry.
     it('does not register gamepad bindings as global keyboard shortcuts', () => {
       mockGetKeybindings.mockReturnValue(gamepadBinding());
       mockIsRegistered.mockReturnValue(false);
@@ -210,52 +210,6 @@ describe('KeybindingManager', () => {
       const manager = new KeybindingManager(fakeOverlayManager);
       manager.registerAll();
 
-      expect(mockRegister).not.toHaveBeenCalled();
-    });
-
-    it('triggers the mapped action when its bound pad button is pressed', () => {
-      const toggleLock = vi.fn();
-      mockGetKeybindings.mockReturnValue(gamepadBinding());
-      mockIsRegistered.mockReturnValue(false);
-
-      const manager = new KeybindingManager(overlayWith(toggleLock));
-      manager.registerAll(); // builds the gamepad token -> action map
-
-      fireButton(manager, 'gamepad:btn0');
-      expect(toggleLock).toHaveBeenCalledOnce();
-    });
-
-    it('does not trigger an action for an unbound pad button', () => {
-      const toggleLock = vi.fn();
-      mockGetKeybindings.mockReturnValue(gamepadBinding());
-      mockIsRegistered.mockReturnValue(false);
-
-      const manager = new KeybindingManager(overlayWith(toggleLock));
-      manager.registerAll();
-
-      fireButton(manager, 'gamepad:btn1');
-      expect(toggleLock).not.toHaveBeenCalled();
-    });
-
-    it('forwards to the capture callback instead of triggering while recording', () => {
-      const toggleLock = vi.fn();
-      mockGetKeybindings.mockReturnValue(gamepadBinding());
-      mockIsRegistered.mockReturnValue(false);
-
-      const manager = new KeybindingManager(overlayWith(toggleLock));
-      manager.registerAll();
-
-      const captured: string[] = [];
-      manager.startGamepadCapture((token) => captured.push(token));
-      fireButton(manager, 'gamepad:btn0');
-
-      expect(captured).toEqual(['gamepad:btn0']);
-      expect(toggleLock).not.toHaveBeenCalled();
-
-      manager.stopGamepadCapture();
-      fireButton(manager, 'gamepad:btn0');
-      expect(toggleLock).toHaveBeenCalledOnce();
-    });
   });
 
   describe('isValidAccelerator', () => {

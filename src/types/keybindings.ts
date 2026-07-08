@@ -1,15 +1,32 @@
-/** Identifiers for every bindable action in the app */
-export type KeybindingActionId =
+/** Fixed, app-level actions with a factory default binding. */
+export type StaticKeybindingActionId =
   | 'toggle-hide-ui'
   | 'toggle-edit-mode'
   | 'save-telemetry'
+  | 'prev-profile'
+  | 'next-profile'
   | 'recenter-vr';
+
+/**
+ * Dynamic per-widget show/hide action, keyed by the widget instance id, e.g.
+ * `toggle-widget:standings`. These have no factory default — they are bound by
+ * the user and derived from the current dashboard's widget list.
+ */
+export type WidgetToggleActionId = `toggle-widget:${string}`;
+
+/** Identifiers for every bindable action in the app */
+export type KeybindingActionId =
+  | StaticKeybindingActionId
+  | WidgetToggleActionId;
 
 export interface KeybindingEntry {
   /**
    * The bound input. Either an Electron keyboard accelerator
-   * (e.g. "Alt+H", "CommandOrControl+Shift+F6") or a gamepad token
-   * (e.g. "gamepad:btn0"). Use {@link isGamepadBinding} to tell them apart.
+   * (e.g. "Alt+H", "CommandOrControl+Shift+F6"), a single gamepad token
+   * (e.g. "gamepad:btn0"), or a multi-button gamepad combo/chord — gamepad
+   * tokens joined by '+' in sorted order (e.g. "gamepad:btn0+gamepad:btn5").
+   * Use `isGamepadBinding` to tell them apart, `parseGamepadTokens` to split
+   * a combo into its individual tokens.
    */
   accelerator: string;
   /** Human-readable label for the settings UI */
@@ -97,7 +114,12 @@ export interface KeybindingsBridge {
   getKeybindings: () => Promise<KeybindingsMap>;
   updateKeybinding: (
     actionId: KeybindingActionId,
-    accelerator: string
+    accelerator: string,
+    /**
+     * Friendly name + description, used when creating a binding for a dynamic
+     * action (e.g. a widget toggle) that has no factory default entry.
+     */
+    meta?: { label: string; description: string }
   ) => Promise<KeybindingsMap>;
   resetKeybinding: (actionId: KeybindingActionId) => Promise<KeybindingsMap>;
   resetAllKeybindings: () => Promise<KeybindingsMap>;
@@ -117,10 +139,13 @@ export interface KeybindingsBridge {
 
 /**
  * Bridge exposed only to the hidden WebHID host window. Forwards a controller
- * button press (already encoded as a `gamepad:btn<N>` token) to the main process.
+ * button transition (already encoded as a `gamepad:btn<N>` token) to the main
+ * process: `down: true` on press, `false` on release. Releases let the main
+ * process track which buttons and hat directions are held together for
+ * combo (chord) bindings.
  */
 export interface GamepadHostBridge {
-  sendButton: (token: string) => void;
+  sendButton: (token: string, down: boolean) => void;
 }
 
 export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
@@ -140,6 +165,18 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
     accelerator: 'F7',
     label: 'Save Telemetry',
     description: 'Capture current telemetry data and screenshots',
+    isDefault: true,
+  },
+  'prev-profile': {
+    accelerator: 'Alt+PageUp',
+    label: 'Previous Profile',
+    description: 'Switch to the previous configuration profile',
+    isDefault: true,
+  },
+  'next-profile': {
+    accelerator: 'Alt+PageDown',
+    label: 'Next Profile',
+    description: 'Switch to the next configuration profile',
     isDefault: true,
   },
   'recenter-vr': {

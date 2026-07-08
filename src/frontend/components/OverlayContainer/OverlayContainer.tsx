@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useDashboard,
   useRunningState,
@@ -10,6 +10,8 @@ import { getWidget } from '../../WidgetIndex';
 import { XIcon } from '@phosphor-icons/react';
 import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
 import { SectorTimingUpdater } from './SectorTimingUpdater';
+import { PushToPassUpdater } from './PushToPassUpdater';
+import { PitLapUpdater } from './PitLapUpdater';
 
 export const OverlayContainer = memo(() => {
   const {
@@ -21,6 +23,27 @@ export const OverlayContainer = memo(() => {
   } = useDashboard();
   const { running } = useRunningState();
   useResetOnDisconnect(running);
+
+  // Session-only per-widget visibility, toggled via a hotkey in the main
+  // process (see KeybindingManager.toggleWidgetHide). Does not touch the saved
+  // dashboard — purely transient, mirroring the global Alt+H hide.
+  const [hiddenWidgetIds, setHiddenWidgetIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  useEffect(() => {
+    if (!window.globalKey?.onWidgetToggle) return;
+    return window.globalKey.onWidgetToggle((widgetId, hide) => {
+      setHiddenWidgetIds((prev) => {
+        const next = new Set(prev);
+        if (hide) {
+          next.add(widgetId);
+        } else {
+          next.delete(widgetId);
+        }
+        return next;
+      });
+    });
+  }, []);
 
   const handleExitEditMode = useCallback(() => {
     bridge.toggleLockOverlays();
@@ -134,7 +157,14 @@ export const OverlayContainer = memo(() => {
       ].join(' ')}
     >
       <SectorTimingUpdater />
+      <PushToPassUpdater />
+      <PitLapUpdater />
       {widgetsForThisDisplay.map((widget, index) => {
+        // Transiently hidden via a per-widget hotkey — skip rendering.
+        if (hiddenWidgetIds.has(widget.id)) {
+          return null;
+        }
+
         const WidgetComponent = getWidget(widget.type || widget.id);
         if (!WidgetComponent) {
           return null;
@@ -167,7 +197,7 @@ export const OverlayContainer = memo(() => {
       {editMode && (
         <button
           onClick={handleExitEditMode}
-          className="pointer-events-auto fixed top-12.5 left-1/2 -translate-x-1/2 z-9999 flex items-center gap-2 px-3 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded shadow-lg transition-colors cursor-pointer"
+          className="pointer-events-auto fixed top-12.5 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2 px-3 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded shadow-lg transition-colors cursor-pointer"
         >
           <XIcon size={18} weight="bold" />
           <span className="text-sm font-medium">Exit Edit Mode</span>

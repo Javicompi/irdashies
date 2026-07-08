@@ -29,6 +29,7 @@ import { SlowCarAheadSettings } from './sections/SlowCarAheadSettings';
 import { SectorDeltaSettings } from './sections/SectorDeltaSettings';
 import { HeartRateSettings } from './sections/HeartRateSettings';
 import { CornerNameSettings } from './sections/CornerNameSettings';
+import { BattleSettings } from './sections/BattleSettings';
 import { VrSettings } from './sections/VrSettings';
 
 interface SettingsLoaderProps {
@@ -99,6 +100,8 @@ export const SettingsLoader = ({ previewMode }: SettingsLoaderProps = {}) => {
       return <HeartRateSettings />;
     case 'cornername':
       return <CornerNameSettings />;
+    case 'battle':
+      return <BattleSettings />;
     default:
       return widget ? (
         <div className="text-red-400">No settings available for {type}</div>
