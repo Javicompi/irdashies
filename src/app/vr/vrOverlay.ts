@@ -15,8 +15,10 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // Supersampling: render the overlay at N x the display's pixel dimensions so the
 // quad has more texels and aliases less in the headset. The page still lays out
 // as if at the display size (via zoom factor); only the backing texture grows.
+// Caps at 2048 because VR runtimes reject swapchains above 4096 (and 2048 is
+// already very dense for a 1.8m-wide quad — ~1138 texels/m).
 const VR_SUPERSAMPLE = 8;
-const VR_MAX_TEXTURE_DIM = 8192; // clamp longest side on high-res displays
+const VR_MAX_TEXTURE_DIM = 2048;
 
 let osrWindow: BrowserWindow | null = null;
 

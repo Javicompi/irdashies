@@ -1,3 +1,5 @@
+import type { ParsedGamepadToken } from './gamepadToken';
+
 /** Fixed, app-level actions with a factory default binding. */
 export type StaticKeybindingActionId =
   | 'toggle-hide-ui'
@@ -72,13 +74,6 @@ export function gamepadTokenFromIndex(
   return deviceName
     ? `${GAMEPAD_TOKEN_PREFIX}${encodeURIComponent(deviceName)}:${button}`
     : `${GAMEPAD_TOKEN_PREFIX}${button}`;
-}
-
-export interface ParsedGamepadToken {
-  /** Decoded device product name, or undefined when the token carries none. */
-  device?: string;
-  /** Button id, e.g. "btn5". */
-  button: string;
 }
 
 /** Parse a gamepad token into its device + button parts, or null if invalid. */

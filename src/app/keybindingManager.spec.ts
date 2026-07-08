@@ -210,6 +210,8 @@ describe('KeybindingManager', () => {
       const manager = new KeybindingManager(fakeOverlayManager);
       manager.registerAll();
 
+      expect(mockRegister).not.toHaveBeenCalled();
+    });
   });
 
   describe('isValidAccelerator', () => {
@@ -247,3 +249,4 @@ describe('KeybindingManager', () => {
     });
   });
 });
+

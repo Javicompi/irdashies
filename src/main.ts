@@ -47,16 +47,13 @@ const overlayManager = new OverlayManager();
 const analytics = new Analytics();
 analytics.setupLogTransport();
 
-// Hoisted so the quit handler can stop the gamepad poll thread cleanly.
+// Hoisted so the quit handler can tear down the WebHID host window cleanly.
 let keybindingManager: KeybindingManager | undefined;
 
 overlayManager.setupChromiumFlags();
 overlayManager.setupHardwareAcceleration();
 overlayManager.setupSingleInstanceLock();
 overlayManager.setupAutoStart();
-
-// Hoisted so the quit handler can tear down the WebHID host window cleanly.
-let keybindingManager: KeybindingManager | undefined;
 
 app.on('ready', async () => {
   // Don't start services if we don't have the single instance lock

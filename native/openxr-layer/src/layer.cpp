@@ -140,6 +140,7 @@ struct SessionState {
   ID3D11DeviceContext* deferred = nullptr;
   int64_t adapterLuid = 0;  // game GPU; must match the producer's
   XrSpace localSpace = XR_NULL_HANDLE;
+  XrSpace stageSpace = XR_NULL_HANDLE;
   XrSpace viewSpace = XR_NULL_HANDLE;
 
   // Recenter: when the producer's recenterCounter changes, capture the head
@@ -147,6 +148,8 @@ struct SessionState {
   uint32_t lastRecenterCounter = 0;
   bool hasRecenterPose = false;
   XrPosef recenterPose{};
+  float recenterYaw = 0;
+  float recenterEyeY = 0;
 
   // Quad swapchain (sized to the shared texture, or kFallbackSize).
   XrSwapchain swapchain = XR_NULL_HANDLE;
@@ -477,35 +480,26 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   const bool haveFrame = readShmFrame(frame) && ensureSharedResources(frame);
 
   // Recenter request: pin the quad in front of the current head pose.
+  // Like OpenKneeboard: anchor X/Z and yaw update every recenter; Y is
+  // captured separately and zeroed in the anchor so head tilt (looking
+  // up/down) doesn't drift the quad vertically.
   if (haveFrame && frame.recenterCounter != g.lastRecenterCounter) {
     g.lastRecenterCounter = frame.recenterCounter;
     XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
     if (g.viewSpace && g.localSpace &&
         XR_SUCCEEDED(g_next_xrLocateSpace(g.viewSpace, g.localSpace,
                                           frameEndInfo->displayTime, &loc)) &&
-        (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) &&
         (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
-      // Anchor the quad's reference frame to the head pose WITHOUT baking in the
-      // current distance/offset. The live SHM pose is applied relative to this
-      // anchor every frame (see my_xrEndFrame below), so distance and
-      // lateral/vertical edits keep propagating in real time after a recenter.
+      // Yaw-only from head orientation (gravity-aligned, like OpenKneeboard).
       const XrVector3f facing = rotateVec(loc.pose.orientation, {0, 0, -1});
-      // Roll-free orientation: keep yaw + pitch but drop head roll so the quad
-      // stays level. Local +Z (normal) faces back at the user; local +X (right)
-      // is forced horizontal via world up; local +Y is up.
-      const XrVector3f normal = norm3({-facing.x, -facing.y, -facing.z});
-      XrVector3f right = cross3({0.0f, 1.0f, 0.0f}, normal);
-      if (len3(right) < 1e-3f) {
-        // Looking near-vertical: world up is ambiguous, keep full orientation.
-        g.recenterPose.orientation = loc.pose.orientation;
-      } else {
-        right = norm3(right);
-        const XrVector3f up = cross3(normal, right);
-        g.recenterPose.orientation = quatFromBasis(right, up, normal);
-      }
-      g.recenterPose.position = loc.pose.position;
+      g.recenterYaw = std::atan2(facing.x, -facing.z);
+
+      // X/Z anchor plus eye height (Y zeroed in the anchor).
+      g.recenterPose.position.x = loc.pose.position.x;
+      g.recenterPose.position.z = loc.pose.position.z;
+      g.recenterEyeY = loc.pose.position.y;
       g.hasRecenterPose = true;
-      layerLog("Recentered quad anchor to current head pose (roll ignored).");
+      layerLog("Recentered quad anchor.");
     }
   }
 
@@ -579,25 +573,23 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   quad.subImage.imageRect = {{0, 0}, {(int32_t)w, (int32_t)h}};
   quad.subImage.imageArrayIndex = 0;
   if (haveFrame) {
-    const XrQuaternionf offsetOrient{
-        frame.poseOrientation[0], frame.poseOrientation[1],
-        frame.poseOrientation[2], frame.poseOrientation[3]};
-    const XrVector3f offsetPos{frame.posePosition[0], frame.posePosition[1],
-                               frame.posePosition[2]};
+    const float h = frame.posePosition[0];  // horizontal offset
+    const float v = frame.posePosition[1];  // vertical offset
+    const float d = -frame.posePosition[2]; // distance (pose.z is -distance)
     if (g.hasRecenterPose) {
-      // Apply the live SHM pose as an offset inside the recentered anchor frame
-      // so distance (local -Z), lateral (local X) and vertical (local Y) edits
-      // propagate in real time. Producer orientation is identity in practice,
-      // but compose it for correctness.
-      const XrVector3f worldOffset =
-          rotateVec(g.recenterPose.orientation, offsetPos);
-      quad.pose.position = {g.recenterPose.position.x + worldOffset.x,
-                            g.recenterPose.position.y + worldOffset.y,
-                            g.recenterPose.position.z + worldOffset.z};
-      quad.pose.orientation = quatMul(g.recenterPose.orientation, offsetOrient);
+      // Like OpenKneeboard: anchor X/Z + yaw from recenter, eye height
+      // captured separately so head tilt doesn't drift the quad vertically.
+      const float cy = std::cos(g.recenterYaw);
+      const float sy = std::sin(g.recenterYaw);
+      quad.pose.orientation = {0, 0, 0, 1};
+      quad.pose.position = {
+          g.recenterPose.position.x + h * cy + d * sy,
+          g.recenterEyeY + v,
+          g.recenterPose.position.z + h * sy - d * cy,
+      };
     } else {
-      quad.pose.orientation = offsetOrient;
-      quad.pose.position = offsetPos;
+      quad.pose.orientation = {0, 0, 0, 1};
+      quad.pose.position = {h, v, -d};
     }
     quad.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
   } else {
@@ -696,6 +688,16 @@ static XrResult XRAPI_CALL my_xrCreateSession(
     g.viewSpace = XR_NULL_HANDLE;
   }
 
+  // STAGE space - used for quad positioning so it moves with iRacing's recenter.
+  XrReferenceSpaceCreateInfo stageInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+  stageInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+  stageInfo.poseInReferenceSpace.orientation = {0, 0, 0, 1};
+  if (XR_FAILED(g_next_xrCreateReferenceSpace(*session, &stageInfo,
+                                              &g.stageSpace))) {
+    layerLog("Failed to create STAGE reference space, falling back to LOCAL.");
+    g.stageSpace = XR_NULL_HANDLE;
+  }
+
   if (!createBlitPipeline()) {
     layerLog("Failed to create blit pipeline - overlay disabled.");
     return res;
@@ -715,6 +717,7 @@ static XrResult XRAPI_CALL my_xrDestroySession(XrSession session) {
     release(g.ps);
     if (g.localSpace) g_next_xrDestroySpace(g.localSpace);
     if (g.viewSpace) g_next_xrDestroySpace(g.viewSpace);
+    if (g.stageSpace) g_next_xrDestroySpace(g.stageSpace);
     release(g.deferred);
     release(g.context4);
     release(g.context);

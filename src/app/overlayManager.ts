@@ -539,6 +539,29 @@ export class OverlayManager {
   // managed (e.g. the offscreen VR overlay window).
   private externalWindows = new Set<BrowserWindow>();
 
+  /**
+   * Send an IPC message to all windows (display overlays + external windows
+   * like the VR OSR window).
+   */
+  public broadcastToAll(channel: string, ...args: unknown[]): void {
+    for (const win of this.displayWindows.values()) {
+      if (win.isDestroyed()) continue;
+      try {
+        win.webContents.send(channel, ...args);
+      } catch (e) {
+        logger.error(`Failed to broadcast ${channel} to display window`, e);
+      }
+    }
+    for (const win of this.externalWindows) {
+      if (win.isDestroyed()) continue;
+      try {
+        win.webContents.send(channel, ...args);
+      } catch (e) {
+        logger.error(`Failed to broadcast ${channel} to external window`, e);
+      }
+    }
+  }
+
   public publishMessage(key: string, value: unknown): void {
     // Send to all display overlay windows
     for (const win of this.displayWindows.values()) {

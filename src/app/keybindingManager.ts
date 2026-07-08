@@ -35,9 +35,7 @@ export class KeybindingManager {
   private setupActionHandlers(): void {
     this.actionHandlers.set('toggle-hide-ui', () => {
       this.hideState = !this.hideState;
-      this.overlayManager.getOverlays().forEach(({ window }) => {
-        window.webContents.send('global-toggle-hide', this.hideState);
-      });
+      this.overlayManager.broadcastToAll('global-toggle-hide', this.hideState);
     });
 
     this.actionHandlers.set('toggle-edit-mode', () => {
@@ -154,9 +152,7 @@ export class KeybindingManager {
     } else {
       this.hiddenWidgets.delete(widgetId);
     }
-    this.overlayManager.getOverlays().forEach(({ window }) => {
-      window.webContents.send('widget-toggle-hide', widgetId, hide);
-    });
+    this.overlayManager.broadcastToAll('widget-toggle-hide', widgetId, hide);
   }
 
   public getBindings(): KeybindingsMap {
