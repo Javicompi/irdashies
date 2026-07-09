@@ -99,8 +99,7 @@ export function startVrOverlay(
     height: texH,
     show: false,
     frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
+    backgroundColor: '#0f1117',
     webPreferences,
   });
 
@@ -112,7 +111,12 @@ export function startVrOverlay(
   // Apply the supersample zoom on load: zoom shrinks the CSS viewport back to
   // the display size while the backing texture stays at texW x texH.
   wc.on('did-finish-load', () => {
-    if (osrWindow && !osrWindow.isDestroyed()) wc.setZoomFactor(zoomFactor);
+    if (osrWindow && !osrWindow.isDestroyed()) {
+      wc.setZoomFactor(zoomFactor);
+      // Solid dark background for VR overlay (removes whitish tint from
+      // premultiplied alpha blend with the bright VR scene).
+      wc.insertCSS('html, body { background: #0f1117 !important; }');
+    }
   });
   let loggedFirstPaint = false;
   let loggedNoTexture = false;
