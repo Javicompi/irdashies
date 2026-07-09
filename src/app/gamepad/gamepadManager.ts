@@ -55,8 +55,13 @@ export class GamepadManager {
     }
     this.held.add(token);
     const combo = gamepadComboToken(this.held);
-    D(`btn: token=${token} combo=${combo} mapHas=${this.map.has(combo)} mapSize=${this.map.size}`);
-    const actionId = this.map.get(combo);
+    let actionId = this.map.get(combo);
+    if (!actionId) {
+      // Held may contain phantom buttons (e.g. Fanatec wheel always-pressed
+      // controls). Fallback: try just the newly-pressed token alone.
+      D(`fallback: combo miss, trying single token "${token}"`);
+      actionId = this.map.get(token);
+    }
     if (actionId) { D(`FIRE: ${actionId}`); this.triggerAction(actionId); }
   }
 
