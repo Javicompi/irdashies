@@ -112,12 +112,7 @@ export function startVrOverlay(
   // Apply the supersample zoom on load: zoom shrinks the CSS viewport back to
   // the display size while the backing texture stays at texW x texH.
   wc.on('did-finish-load', () => {
-    if (osrWindow && !osrWindow.isDestroyed()) {
-      wc.setZoomFactor(zoomFactor);
-      // In VR the premultiplied alpha blend washes out semi-transparent widget
-      // backgrounds; force 100% opacity so widgets are crisp and solid.
-      wc.insertCSS('* { --bg-opacity: 1 !important; }');
-    }
+    if (osrWindow && !osrWindow.isDestroyed()) wc.setZoomFactor(zoomFactor);
   });
   let loggedFirstPaint = false;
   let loggedNoTexture = false;
