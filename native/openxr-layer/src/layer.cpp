@@ -162,8 +162,10 @@ struct SessionState {
   // Fullscreen-triangle blit pipeline.
   ID3D11VertexShader* vs = nullptr;
   ID3D11PixelShader* ps = nullptr;
+  ID3D11PixelShader* psSwizzle = nullptr;   // R<->B swizzle variant
   ID3D11SamplerState* sampler = nullptr;
   ID3D11RasterizerState* rasterState = nullptr;  // CULL_NONE (winding-agnostic)
+  bool needsSwizzle = false;
 
   // Shared producer resources (cached; reopened when producer identity changes).
   uint32_t feederPid = 0;
@@ -262,6 +264,13 @@ static const char kPS[] =
     "  return tex.Sample(smp,uv);"
     "}";
 
+static const char kPSSwizzle[] =
+    "Texture2D tex:register(t0);SamplerState smp:register(s0);"
+    "float4 main(float4 pos:SV_Position,float2 uv:TEXCOORD0):SV_Target{"
+    "  float4 c=tex.Sample(smp,uv);"
+    "  return float4(c.b,c.g,c.r,c.a);"
+    "}";
+
 static bool createBlitPipeline() {
   ID3DBlob* vsb = nullptr;
   ID3DBlob* psb = nullptr;
@@ -285,6 +294,17 @@ static bool createBlitPipeline() {
                                           psb->GetBufferSize(), nullptr, &g.ps);
   release(vsb);
   release(psb);
+
+  ID3DBlob* swizzlePsb = nullptr;
+  if (SUCCEEDED(D3DCompile(kPSSwizzle, sizeof(kPSSwizzle) - 1,
+                           "ps_swizzle", nullptr, nullptr, "main",
+                           "ps_5_0", 0, 0, &swizzlePsb, nullptr))) {
+    g.device->CreatePixelShader(swizzlePsb->GetBufferPointer(),
+                                swizzlePsb->GetBufferSize(), nullptr,
+                                &g.psSwizzle);
+    release(swizzlePsb);
+  }
+
   if (FAILED(a) || FAILED(b)) {
     layerLog("Create shader failed.");
     return false;
@@ -375,8 +395,8 @@ static bool ensureSharedResources(const IrdashiesShmHeader& f) {
       g.texHandleVal = f.textureHandle;
       g.fenceHandleVal = f.fenceHandle;
       ok = true;
-      layerLog("Opened shared texture %ux%u from producer PID %u.", f.width,
-               f.height, f.feederProcessId);
+      layerLog("Opened shared texture %ux%u format %u from producer PID %u.", f.width,
+               f.height, f.format, f.feederProcessId);
     }
   }
   // Once OpenShared* succeeds, D3D holds its own reference; close our dups.
@@ -398,14 +418,16 @@ static bool ensureSharedResources(const IrdashiesShmHeader& f) {
 // ---------------------------------------------------------------------------
 // Swapchain management (recreated when target size/format changes)
 // ---------------------------------------------------------------------------
-static int64_t pickFormat() {
+static int64_t pickFormat(DXGI_FORMAT srcFormat = DXGI_FORMAT_UNKNOWN) {
   uint32_t count = 0;
   g_next_xrEnumerateSwapchainFormats(g.session, 0, &count, nullptr);
   std::vector<int64_t> formats(count);
   g_next_xrEnumerateSwapchainFormats(g.session, count, &count, formats.data());
-  // Any RTV-able UNORM format works (we blit through a shader).
-  for (int64_t want : {(int64_t)DXGI_FORMAT_R8G8B8A8_UNORM,
-                       (int64_t)DXGI_FORMAT_B8G8R8A8_UNORM}) {
+  // 1) exact match with the producer's source format (no swizzle needed)
+  for (int64_t f : formats) if (f == (int64_t)srcFormat) return f;
+  // 2) the other common UNORM 8-bit format (swizzle in shader if mismatch)
+  for (int64_t want : {(int64_t)DXGI_FORMAT_B8G8R8A8_UNORM,
+                       (int64_t)DXGI_FORMAT_R8G8B8A8_UNORM}) {
     for (int64_t f : formats) {
       if (f == want) return f;
     }
@@ -424,11 +446,12 @@ static void destroySwapchain() {
   g.width = g.height = 0;
 }
 
-static bool ensureSwapchain(uint32_t w, uint32_t h) {
-  if (g.swapchain && g.width == w && g.height == h) return true;
+static bool ensureSwapchain(uint32_t w, uint32_t h, int64_t format) {
+  if (g.swapchain && g.width == w && g.height == h &&
+      g.swapchainFormat == format) return true;
   destroySwapchain();
 
-  if (g.swapchainFormat == 0) g.swapchainFormat = pickFormat();
+  g.swapchainFormat = format;
 
   XrSwapchainCreateInfo sc{XR_TYPE_SWAPCHAIN_CREATE_INFO};
   sc.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
@@ -503,9 +526,22 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     }
   }
 
+  int64_t fmt = g.swapchainFormat;
+  if (haveFrame) {
+    const DXGI_FORMAT srcFmt = (DXGI_FORMAT)frame.format;
+    fmt = pickFormat(srcFmt);
+    const DXGI_FORMAT dstFmt = (DXGI_FORMAT)fmt;
+    g.needsSwizzle = (srcFmt != dstFmt) &&
+                     (srcFmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                      srcFmt == DXGI_FORMAT_R8G8B8A8_UNORM) &&
+                     (dstFmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                      dstFmt == DXGI_FORMAT_R8G8B8A8_UNORM);
+  }
+  if (fmt == 0) fmt = pickFormat();
+
   const uint32_t w = haveFrame ? frame.width : kFallbackSize;
   const uint32_t h = haveFrame ? frame.height : kFallbackSize;
-  if (!ensureSwapchain(w, h)) {
+  if (!ensureSwapchain(w, h, fmt)) {
     return g_next_xrEndFrame(session, frameEndInfo);
   }
 
@@ -534,7 +570,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     dc->IASetInputLayout(nullptr);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->VSSetShader(g.vs, nullptr, 0);
-    dc->PSSetShader(g.ps, nullptr, 0);
+    dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
     dc->PSSetShaderResources(0, 1, &g.sharedSrv);
     dc->PSSetSamplers(0, 1, &g.sampler);
     dc->Draw(3, 0);
@@ -718,6 +754,7 @@ static XrResult XRAPI_CALL my_xrDestroySession(XrSession session) {
     release(g.sampler);
     release(g.vs);
     release(g.ps);
+    release(g.psSwizzle);
     if (g.localSpace) g_next_xrDestroySpace(g.localSpace);
     if (g.viewSpace) g_next_xrDestroySpace(g.viewSpace);
     if (g.stageSpace) g_next_xrDestroySpace(g.stageSpace);
