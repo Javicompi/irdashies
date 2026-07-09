@@ -211,6 +211,10 @@ export class KeybindingManager {
 
   /** Start reading game controllers (see {@link GamepadManager.start}). */
   public startGamepad(): void {
+    // Reload bindings from storage to ensure the gamepad map is in sync
+    // with any persisted configuration from a previous session.
+    this.bindings = getKeybindings();
+    this.gamepad.syncBindings(this.bindings);
     this.gamepad.start();
   }
 
