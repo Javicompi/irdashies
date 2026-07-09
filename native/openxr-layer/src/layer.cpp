@@ -32,6 +32,20 @@
 #include "irdashies_shm.h"
 
 // ---------------------------------------------------------------------------
+// Process gate: only inject into iRacing
+// ---------------------------------------------------------------------------
+static bool g_gatedOff = false;  // true = not iRacing, do nothing
+
+static bool hostIsIRacing() {
+  wchar_t path[MAX_PATH];
+  DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) return false;
+  wchar_t* base = path;
+  for (wchar_t* p = path; *p; ++p) if (*p == L'\\' || *p == L'/') base = p + 1;
+  return _wcsicmp(base, L"iRacingSim64DX11.exe") == 0;
+}
+
+// ---------------------------------------------------------------------------
 // Logging (no debugger in an injected game process; log to a temp file)
 // ---------------------------------------------------------------------------
 static void layerLog(const char* fmt, ...) {
@@ -472,6 +486,7 @@ static bool ensureSwapchain(uint32_t w, uint32_t h) {
 // ---------------------------------------------------------------------------
 static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
                                          const XrFrameEndInfo* frameEndInfo) {
+  if (g_gatedOff) return g_next_xrEndFrame(session, frameEndInfo);
   if (session != g.session || !g.device) {
     return g_next_xrEndFrame(session, frameEndInfo);
   }
@@ -617,6 +632,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
 static XrResult XRAPI_CALL my_xrCreateSession(
     XrInstance instance, const XrSessionCreateInfo* createInfo,
     XrSession* session) {
+  if (g_gatedOff) return g_next_xrCreateSession(instance, createInfo, session);
   XrResult res = g_next_xrCreateSession(instance, createInfo, session);
   if (XR_FAILED(res)) return res;
 
@@ -737,6 +753,7 @@ static XrResult XRAPI_CALL my_xrDestroySession(XrSession session) {
 static XrResult XRAPI_CALL my_xrGetInstanceProcAddr(
     XrInstance instance, const char* name, PFN_xrVoidFunction* function) {
   if (!g_nextGetInstanceProcAddr) return XR_ERROR_HANDLE_INVALID;
+  if (g_gatedOff) return g_nextGetInstanceProcAddr(instance, name, function);
 
   std::string_view n{name};
   if (n == "xrCreateSession") {
@@ -762,6 +779,15 @@ static XrResult XRAPI_CALL my_xrCreateApiLayerInstance(
   }
 
   g_nextGetInstanceProcAddr = layerInfo->nextInfo->nextGetInstanceProcAddr;
+
+  g_gatedOff = !hostIsIRacing();
+  if (g_gatedOff && GetEnvironmentVariableW(L"IRDASHIES_OPENXR_FORCE_ON", nullptr, 0) != 0) {
+    g_gatedOff = false;
+    layerLog("IRDASHIES_OPENXR_FORCE_ON set - layer active regardless of host");
+  }
+  layerLog("Host process gate: %s (gatedOff=%d)",
+           g_gatedOff ? "NOT iRacing -> pass-through" : "iRacing -> active",
+           (int)g_gatedOff);
 
   XrApiLayerCreateInfo nextLayerInfo = *layerInfo;
   nextLayerInfo.nextInfo = layerInfo->nextInfo->next;
