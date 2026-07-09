@@ -581,7 +581,8 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       // captured separately so head tilt doesn't drift the quad vertically.
       const float cy = std::cos(g.recenterYaw);
       const float sy = std::sin(g.recenterYaw);
-      quad.pose.orientation = {0, 0, 0, 1};
+      const float halfYaw = g.recenterYaw * 0.5f;
+      quad.pose.orientation = {0.0f, std::sin(halfYaw), 0.0f, std::cos(halfYaw)};
       quad.pose.position = {
           g.recenterPose.position.x + h * cy + d * sy,
           g.recenterEyeY + v,
