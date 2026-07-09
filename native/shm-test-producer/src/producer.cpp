@@ -169,6 +169,27 @@ int main() {
   printf("Publishing %ux%u BGRA on %u-slot ring. Ctrl+C to stop.\n",
          kWidth, kHeight, IRDASHIES_SHM_RING_SIZE);
 
+  // Publish 4 coloured quadrants as a layer table for multi-quad testing.
+  const uint32_t hw = kWidth / 2;
+  const uint32_t hh = kHeight / 2;
+  shm->layerCount = 4;
+  for (uint32_t i = 0; i < 4; ++i) {
+    auto& l = shm->layers[i];
+    l.posePosition[0] = (i % 2 == 0) ? -0.3f : 0.3f;
+    l.posePosition[1] = (i < 2) ? 0.15f : -0.15f;
+    l.posePosition[2] = -1.5f;
+    l.poseOrientation[0] = 0; l.poseOrientation[1] = 0;
+    l.poseOrientation[2] = 0; l.poseOrientation[3] = 1;
+    l.quadSizeMeters[0] = 0.25f;
+    l.quadSizeMeters[1] = 0.25f;
+    l.sourceRect[0] = (float)((i % 2) * hw);
+    l.sourceRect[1] = (float)((i < 2) ? 0 : hh);
+    l.sourceRect[2] = (float)hw;
+    l.sourceRect[3] = (float)hh;
+    l.opacity = 1.0f;
+    l.visible = 1;
+  }
+
   std::vector<uint32_t> pixels(kWidth * kHeight);
   uint64_t fenceValue = 0;
   uint64_t frame = 0;

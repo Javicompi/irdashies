@@ -83,6 +83,17 @@ export function startVrOverlay(
       logger.error('[VR] native overlay start returned false');
       return;
     }
+    // Publish a single layer covering the full atlas texture.
+    VrOverlayNative.setLayers([
+      {
+        position: pose.position ?? [0, 0, -1.5],
+        orientation: pose.orientation ?? [0, 0, 0, 1],
+        size: pose.size ?? [0.5, 0.5],
+        sourceRect: [0, 0, texW, texH],
+        opacity: 1,
+        visible: 1,
+      },
+    ]);
   } catch (err) {
     logger.error('[VR] failed to start native overlay', err);
     return;

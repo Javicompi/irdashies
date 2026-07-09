@@ -81,6 +81,9 @@ struct State {
   uint32_t writeIndex = 0;
   uint64_t frameCounter = 0;
 
+  IrdashiesShmLayer layers[IRDASHIES_SHM_MAX_LAYERS];
+  uint32_t layerCount = 0;
+
   ID3D11Fence* fence = nullptr;
   HANDLE fenceHandle = nullptr;
   uint64_t fenceValue = 0;
@@ -378,6 +381,10 @@ Napi::Value SubmitFrame(const Napi::CallbackInfo& info) {
   g.shm->fenceValue = g.fenceValue;
   g.shm->latestIndex = g.writeIndex;
   g.shm->flags |= IRDASHIES_SHM_FLAG_FEEDER_ATTACHED;
+  g.shm->layerCount = g.layerCount;
+  for (uint32_t i = 0; i < g.layerCount && i < IRDASHIES_SHM_MAX_LAYERS; ++i) {
+    g.shm->layers[i] = g.layers[i];
+  }
   if (g.mutex) ReleaseMutex(g.mutex);
 
   static bool firstOk = false;
@@ -396,6 +403,38 @@ Napi::Value SetPose(const Napi::CallbackInfo& info) {
     writePose(info[0].As<Napi::Object>());
     if (g.mutex) ReleaseMutex(g.mutex);
   }
+  return env.Undefined();
+}
+
+// setLayers(layers) -> void
+// Publish per-widget layer config (poses, sub-rects, opacity).
+Napi::Value SetLayers(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) return env.Undefined();
+  Napi::Array arr = info[0].As<Napi::Array>();
+  uint32_t n = arr.Length();
+  if (n > IRDASHIES_SHM_MAX_LAYERS) n = IRDASHIES_SHM_MAX_LAYERS;
+  for (uint32_t i = 0; i < n; ++i) {
+    Napi::Value v = arr.Get(i);
+    if (!v.IsObject()) continue;
+    Napi::Object obj = v.As<Napi::Object>();
+    auto readFloatArr = [&](const char* key, float* out, int count) {
+      if (obj.Has(key) && obj.Get(key).IsArray()) {
+        Napi::Array a = obj.Get(key).As<Napi::Array>();
+        for (int j = 0; j < count; ++j)
+          out[j] = (j < (int)a.Length()) ? a.Get(j).As<Napi::Number>().FloatValue() : 0.0f;
+      }
+    };
+    readFloatArr("position", g.layers[i].posePosition, 3);
+    readFloatArr("orientation", g.layers[i].poseOrientation, 4);
+    readFloatArr("size", g.layers[i].quadSizeMeters, 2);
+    readFloatArr("sourceRect", g.layers[i].sourceRect, 4);
+    g.layers[i].opacity =
+        obj.Has("opacity") ? obj.Get("opacity").As<Napi::Number>().FloatValue() : 1.0f;
+    g.layers[i].visible =
+        obj.Has("visible") ? obj.Get("visible").As<Napi::Number>().Uint32Value() : 1u;
+  }
+  g.layerCount = n;
   return env.Undefined();
 }
 
@@ -422,6 +461,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("start", Napi::Function::New(env, Start));
   exports.Set("submitFrame", Napi::Function::New(env, SubmitFrame));
   exports.Set("setPose", Napi::Function::New(env, SetPose));
+  exports.Set("setLayers", Napi::Function::New(env, SetLayers));
   exports.Set("recenter", Napi::Function::New(env, Recenter));
   exports.Set("stop", Napi::Function::New(env, Stop));
   return exports;

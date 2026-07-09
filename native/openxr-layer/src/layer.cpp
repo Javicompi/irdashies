@@ -590,6 +590,9 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
                       dstFmt == DXGI_FORMAT_R8G8B8A8_UNORM);
   }
   if (fmt == 0) fmt = pickFormat();
+
+  if (!haveFrame) return g_next_xrEndFrame(session, frameEndInfo);
+
   if (!ensureSwapchain(w, h, fmt)) {
     return g_next_xrEndFrame(session, frameEndInfo);
   }
@@ -603,92 +606,103 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   wait.timeout = XR_INFINITE_DURATION;
   g_next_xrWaitSwapchainImage(g.swapchain, &wait);
 
-  if (haveFrame) {
-    // Wait on the GPU until the producer signalled this frame is ready.
-    g.context4->Wait(g.fence, frame.fenceValue);
+  // Wait on the GPU until the producer signalled this frame is ready.
+  g.context4->Wait(g.fence, frame.fenceValue);
 
-    // Record the blit on the deferred context (default pipeline state) and
-    // execute with RestoreContextState=TRUE so the game's immediate context
-    // state is preserved. Falling back to the immediate context only if no
-    // deferred context is available.
-    ID3D11DeviceContext* dc = g.deferred ? g.deferred : g.context;
-    dc->OMSetRenderTargets(1, &g.rtvs[idx], nullptr);
-    D3D11_VIEWPORT vp{0, 0, (float)w, (float)h, 0, 1};
-    dc->RSSetViewports(1, &vp);
-    dc->RSSetState(g.rasterState);
-    dc->IASetInputLayout(nullptr);
-    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    dc->VSSetShader(g.vs, nullptr, 0);
-    dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
-    dc->PSSetShaderResources(0, 1, &g.slotViews[slotIdx].srv);
-    dc->PSSetSamplers(0, 1, &g.sampler);
-    dc->Draw(3, 0);
+  // Record the blit on the deferred context (default pipeline state) and
+  // execute with RestoreContextState=TRUE so the game's immediate context
+  // state is preserved. Falling back to the immediate context only if no
+  // deferred context is available.
+  ID3D11DeviceContext* dc = g.deferred ? g.deferred : g.context;
+  dc->OMSetRenderTargets(1, &g.rtvs[idx], nullptr);
+  D3D11_VIEWPORT vp{0, 0, (float)w, (float)h, 0, 1};
+  dc->RSSetViewports(1, &vp);
+  dc->RSSetState(g.rasterState);
+  dc->IASetInputLayout(nullptr);
+  dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  dc->VSSetShader(g.vs, nullptr, 0);
+  dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
+  dc->PSSetShaderResources(0, 1, &g.slotViews[slotIdx].srv);
+  dc->PSSetSamplers(0, 1, &g.sampler);
+  dc->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    dc->PSSetShaderResources(0, 1, &nullSrv);  // clear hazard
+  ID3D11ShaderResourceView* nullSrv = nullptr;
+  dc->PSSetShaderResources(0, 1, &nullSrv);  // clear hazard
 
-    if (g.deferred) {
-      ID3D11CommandList* cmd = nullptr;
-      if (SUCCEEDED(g.deferred->FinishCommandList(FALSE, &cmd)) && cmd) {
-        g.context->ExecuteCommandList(cmd, TRUE);
-        cmd->Release();
-      }
-    }
-  } else {
-    // No producer: animated solid color so something is always visible.
-    double seconds = (double)frameEndInfo->displayTime / 1e9;
-    float pulse = 0.5f + 0.5f * (float)std::sin(seconds * 2.0);
-    float clear[4] = {0.0f, 0.6f * pulse + 0.2f, 1.0f, 1.0f};
-    if (idx < g.rtvs.size() && g.rtvs[idx]) {
-      g.context->ClearRenderTargetView(g.rtvs[idx], clear);
+  if (g.deferred) {
+    ID3D11CommandList* cmd = nullptr;
+    if (SUCCEEDED(g.deferred->FinishCommandList(FALSE, &cmd)) && cmd) {
+      g.context->ExecuteCommandList(cmd, TRUE);
+      cmd->Release();
     }
   }
 
   XrSwapchainImageReleaseInfo rel{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
   g_next_xrReleaseSwapchainImage(g.swapchain, &rel);
 
-  XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-  // Real producer frames are premultiplied-alpha (Chromium OSR) - blend so
-  // transparent page areas are see-through. The fallback pulse is opaque.
-  quad.layerFlags =
-      haveFrame ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0;
-  quad.space = g.localSpace;
-  quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-  quad.subImage.swapchain = g.swapchain;
-  quad.subImage.imageRect = {{0, 0}, {(int32_t)w, (int32_t)h}};
-  quad.subImage.imageArrayIndex = 0;
-  if (haveFrame) {
-    const float h = frame.posePosition[0];  // horizontal offset
-    const float v = frame.posePosition[1];  // vertical offset
-    const float d = -frame.posePosition[2]; // distance (pose.z is -distance)
+  // Build per-widget quads from the layer table. Each quad references the
+  // same swapchain but with a different subImage.imageRect (the widget's
+  // sub-rect in the atlas), its own pose, size, and opacity.
+  std::vector<XrCompositionLayerQuad> ourQuads;
+  const uint32_t lc = frame.layerCount;
+  if (lc > 0 && lc <= IRDASHIES_SHM_MAX_LAYERS) {
+    for (uint32_t i = 0; i < lc; ++i) {
+      const auto& layer = frame.layers[i];
+      if (!layer.visible) continue;
+      XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
+      q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+      q.space = g.localSpace;
+      q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+      q.subImage.swapchain = g.swapchain;
+      q.subImage.imageRect.offset.x = (int32_t)layer.sourceRect[0];
+      q.subImage.imageRect.offset.y = (int32_t)layer.sourceRect[1];
+      q.subImage.imageRect.extent.width = (int32_t)layer.sourceRect[2];
+      q.subImage.imageRect.extent.height = (int32_t)layer.sourceRect[3];
+      q.subImage.imageArrayIndex = 0;
+      q.pose.position = {layer.posePosition[0], layer.posePosition[1],
+                         layer.posePosition[2]};
+      q.pose.orientation = {layer.poseOrientation[0], layer.poseOrientation[1],
+                            layer.poseOrientation[2], layer.poseOrientation[3]};
+      q.size = {layer.quadSizeMeters[0], layer.quadSizeMeters[1]};
+      ourQuads.push_back(q);
+    }
+  }
+
+  // Fallback: no layer table → single quad from shared pose fields.
+  if (ourQuads.empty()) {
+    XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q.space = g.localSpace;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g.swapchain;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)w, (int32_t)h}};
+    q.subImage.imageArrayIndex = 0;
+    const float hp = frame.posePosition[0];
+    const float vp = frame.posePosition[1];
+    const float dp = -frame.posePosition[2];
     if (g.hasRecenterPose) {
-      // Like OpenKneeboard: anchor X/Z + yaw from recenter, eye height
-      // captured separately so head tilt doesn't drift the quad vertically.
       const float cy = std::cos(g.recenterYaw);
       const float sy = std::sin(g.recenterYaw);
       const float halfYaw = g.recenterYaw * 0.5f;
-      // Negate yaw for orientation: compensates the implicit rotation in the
-      // position formula so the quad faces towards the user, not away.
-      quad.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
-      quad.pose.position = {
-          g.recenterPose.position.x + h * cy + d * sy,
-          g.recenterEyeY + v,
-          g.recenterPose.position.z + h * sy - d * cy,
+      q.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
+      q.pose.position = {
+          g.recenterPose.position.x + hp * cy + dp * sy,
+          g.recenterEyeY + vp,
+          g.recenterPose.position.z + hp * sy - dp * cy,
       };
     } else {
-      quad.pose.orientation = {0, 0, 0, 1};
-      quad.pose.position = {h, v, -d};
+      q.pose.orientation = {0, 0, 0, 1};
+      q.pose.position = {hp, vp, -dp};
     }
-    quad.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
-  } else {
-    quad.pose.orientation = {0, 0, 0, 1};
-    quad.pose.position = {0, 0, -1.5f};
-    quad.size = {0.5f, 0.5f};
+    q.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
+    ourQuads.push_back(q);
   }
 
   std::vector<const XrCompositionLayerBaseHeader*> layers(
       frameEndInfo->layers, frameEndInfo->layers + frameEndInfo->layerCount);
-  layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad));
+  for (auto& q : ourQuads) {
+    layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&q));
+  }
 
   XrFrameEndInfo patched = *frameEndInfo;
   patched.layerCount = (uint32_t)layers.size();
