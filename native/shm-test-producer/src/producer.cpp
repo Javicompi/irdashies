@@ -75,7 +75,7 @@ int main() {
     release(dxgiDevice);
   }
 
-  // --- shared texture (BGRA8, shader-resource + NT-handle shared) ---
+  // --- shared textures (ring of 3, all BGRA8) ---
   D3D11_TEXTURE2D_DESC td{};
   td.Width = kWidth;
   td.Height = kHeight;
@@ -86,25 +86,26 @@ int main() {
   td.Usage = D3D11_USAGE_DEFAULT;
   td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   td.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
-  ID3D11Texture2D* texture = nullptr;
-  hr = device->CreateTexture2D(&td, nullptr, &texture);
-  if (FAILED(hr)) {
-    printf("CreateTexture2D failed: 0x%08lx\n", hr);
-    return 1;
-  }
 
-  HANDLE textureHandle = nullptr;
-  {
+  ID3D11Texture2D* textures[IRDASHIES_SHM_RING_SIZE] = {};
+  HANDLE textureHandles[IRDASHIES_SHM_RING_SIZE] = {};
+
+  for (uint32_t i = 0; i < IRDASHIES_SHM_RING_SIZE; ++i) {
+    HRESULT hr = device->CreateTexture2D(&td, nullptr, &textures[i]);
+    if (FAILED(hr)) {
+      printf("CreateTexture2D[%u] failed: 0x%08lx\n", i, hr);
+      return 1;
+    }
     IDXGIResource1* res = nullptr;
-    if (SUCCEEDED(texture->QueryInterface(IID_PPV_ARGS(&res)))) {
+    if (SUCCEEDED(textures[i]->QueryInterface(IID_PPV_ARGS(&res)))) {
       res->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ, nullptr,
-                              &textureHandle);
+                              &textureHandles[i]);
     }
     release(res);
-  }
-  if (!textureHandle) {
-    printf("CreateSharedHandle (texture) failed\n");
-    return 1;
+    if (!textureHandles[i]) {
+      printf("CreateSharedHandle (texture[%u]) failed\n", i);
+      return 1;
+    }
   }
 
   // --- shared fence ---
@@ -144,11 +145,14 @@ int main() {
   shm->version = IRDASHIES_SHM_VERSION;
   shm->feederProcessId = GetCurrentProcessId();
   shm->adapterLuid = luid;
-  shm->textureHandle = (uint64_t)(uintptr_t)textureHandle;
   shm->fenceHandle = (uint64_t)(uintptr_t)fenceHandle;
-  shm->width = kWidth;
-  shm->height = kHeight;
-  shm->format = (uint32_t)DXGI_FORMAT_B8G8R8A8_UNORM;
+  shm->ringSize = IRDASHIES_SHM_RING_SIZE;
+  for (uint32_t i = 0; i < IRDASHIES_SHM_RING_SIZE; ++i) {
+    shm->frames[i].textureHandle = (uint64_t)(uintptr_t)textureHandles[i];
+    shm->frames[i].width = kWidth;
+    shm->frames[i].height = kHeight;
+    shm->frames[i].format = (uint32_t)DXGI_FORMAT_B8G8R8A8_UNORM;
+  }
   shm->posePosition[0] = 0.0f;
   shm->posePosition[1] = 0.0f;
   shm->posePosition[2] = -1.5f;
@@ -159,18 +163,23 @@ int main() {
   shm->quadSizeMeters[0] = 0.5f;
   shm->quadSizeMeters[1] = 0.5f;
 
-  printf("Producer running. PID=%u  texHandle=0x%llx  fenceHandle=0x%llx\n",
-         shm->feederProcessId, (unsigned long long)shm->textureHandle,
-         (unsigned long long)shm->fenceHandle);
-  printf("Publishing %ux%u BGRA. Ctrl+C to stop.\n", kWidth, kHeight);
+  printf("Producer running. PID=%u  fenceHandle=0x%llx  ringSize=%u\n",
+         shm->feederProcessId, (unsigned long long)shm->fenceHandle,
+         shm->ringSize);
+  printf("Publishing %ux%u BGRA on %u-slot ring. Ctrl+C to stop.\n",
+         kWidth, kHeight, IRDASHIES_SHM_RING_SIZE);
 
   std::vector<uint32_t> pixels(kWidth * kHeight);
   uint64_t fenceValue = 0;
   uint64_t frame = 0;
+  uint32_t writeIndex = 0;
 
   for (;;) {
-    // Animated pattern: gradient + a moving diagonal stripe. Distinct from the
-    // layer's own fallback pulse so we know the texture actually crossed over.
+    // Advance to the next slot first, so latestIndex points at the frame
+    // the consumer may still be reading.
+    writeIndex = (writeIndex + 1) % IRDASHIES_SHM_RING_SIZE;
+
+    // Animated pattern: gradient + a moving diagonal stripe.
     float phase = (float)(frame % 240) / 240.0f;
     int stripe = (int)(phase * (kWidth + kHeight));
     for (uint32_t y = 0; y < kHeight; ++y) {
@@ -179,23 +188,24 @@ int main() {
         uint8_t g = (uint8_t)(255 * y / kHeight);
         uint8_t b = 64;
         if (std::abs((int)(x + y) - stripe) < 24) {
-          r = g = b = 255;  // bright diagonal band sweeps across
+          r = g = b = 255;
         }
-        // BGRA8: 0xAARRGGBB in memory little-endian -> B,G,R,A bytes
         pixels[y * kWidth + x] =
             (0xFFu << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
       }
     }
 
-    context->UpdateSubresource(texture, 0, nullptr, pixels.data(), kWidth * 4,
-                               0);
+    context->UpdateSubresource(textures[writeIndex], 0, nullptr,
+                               pixels.data(), kWidth * 4, 0);
     ++fenceValue;
     context4->Signal(fence, fenceValue);
     context->Flush();
 
+    ++frame;
     if (mutex) WaitForSingleObject(mutex, INFINITE);
+    shm->frames[writeIndex].frameNumber = frame;
     shm->fenceValue = fenceValue;
-    shm->frameNumber = ++frame;
+    shm->latestIndex = writeIndex;
     shm->flags |= IRDASHIES_SHM_FLAG_FEEDER_ATTACHED;
     if (mutex) ReleaseMutex(mutex);
 

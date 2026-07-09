@@ -9,48 +9,69 @@
 // names) on any incompatible layout change so an old consumer never
 // misreads a new producer's bytes.
 //
-// MVP: a single quad / single shared texture. The struct is laid out so a
-// per-widget layer array can be appended later without moving existing fields.
+// v2: triple-buffer ring + reserved per-layer table (#04).
 
 #pragma once
 
 #include <cstdint>
 
-#define IRDASHIES_SHM_MAPPING_NAME L"Local\\irdashies-openxr-shm-v1"
-#define IRDASHIES_SHM_MUTEX_NAME L"Local\\irdashies-openxr-shm-v1.mutex"
+#define IRDASHIES_SHM_MAPPING_NAME L"Local\\irdashies-openxr-shm-v2"
+#define IRDASHIES_SHM_MUTEX_NAME L"Local\\irdashies-openxr-shm-v2.mutex"
 
-#define IRDASHIES_SHM_MAGIC 0x31445249u  // 'IRD1'
-#define IRDASHIES_SHM_VERSION 1u
+#define IRDASHIES_SHM_MAGIC 0x32445249u  // 'IRD2'
+#define IRDASHIES_SHM_VERSION 2u
+
+#define IRDASHIES_SHM_RING_SIZE 3u
+#define IRDASHIES_SHM_MAX_LAYERS 16u
 
 // flags
 #define IRDASHIES_SHM_FLAG_FEEDER_ATTACHED 0x1u
 
 #pragma pack(push, 8)
-struct IrdashiesShmHeader {
-  uint32_t magic;    // IRDASHIES_SHM_MAGIC once initialised
-  uint32_t version;  // IRDASHIES_SHM_VERSION
-  uint64_t frameNumber;  // monotonic; 0 = nothing published yet
-  uint32_t feederProcessId;  // producer PID (consumer DuplicateHandle's from it)
-  uint32_t flags;            // IRDASHIES_SHM_FLAG_*
-  int64_t adapterLuid;       // producer GPU LUID; consumer must match adapter
 
-  // Shared GPU resources. These HANDLE values are valid in the PRODUCER
-  // process only - the consumer must DuplicateHandle() from feederProcessId
-  // before OpenSharedResource1 / OpenSharedFence.
-  uint64_t textureHandle;  // NT handle to a shared D3D11 texture
-  uint64_t fenceHandle;    // NT handle to a shared D3D11 fence
-  uint64_t fenceValue;     // consumer waits for fence >= this before reading
-
+struct IrdashiesShmFrameSlot {
+  uint64_t textureHandle;  // NT handle to this slot's shared D3D11 texture
   uint32_t width;
   uint32_t height;
-  uint32_t format;  // DXGI_FORMAT of the shared texture
-  // Bumped by the producer to request the consumer recenter the quad to the
-  // current head pose. The consumer recenters when this value changes.
-  uint32_t recenterCounter;
-
-  // Quad placement in the LOCAL reference space (app controls it).
-  float posePosition[3];     // metres
-  float poseOrientation[4];  // quaternion x,y,z,w
-  float quadSizeMeters[2];   // width,height in metres
+  uint32_t format;         // DXGI_FORMAT
+  uint64_t frameNumber;    // monotonic; 0 = slot never written
 };
+
+struct IrdashiesShmLayer {
+  float posePosition[3];       // metres, LOCAL space
+  float poseOrientation[4];    // quaternion x,y,z,w
+  float quadSizeMeters[2];     // width, height
+  float sourceRect[4];         // x, y, w, h in atlas texels
+  float opacity;               // 0..1
+  uint32_t visible;            // 0 = skip this layer
+};
+
+struct IrdashiesShmHeader {
+  uint32_t magic;              // IRDASHIES_SHM_MAGIC once initialised
+  uint32_t version;            // IRDASHIES_SHM_VERSION
+  uint32_t feederProcessId;    // producer PID
+  uint32_t flags;              // IRDASHIES_SHM_FLAG_*
+  int64_t  adapterLuid;        // producer GPU LUID; consumer must match adapter
+
+  uint64_t fenceHandle;        // NT handle to shared D3D11 fence (single, producer PID)
+  uint64_t fenceValue;         // latest signalled value (matches frames[latestIndex])
+
+  uint32_t writeIndex;         // producer's NEXT slot to write (0..RING_SIZE-1)
+  uint32_t latestIndex;        // slot index of most recent COMPLETED frame
+  uint32_t ringSize;           // == IRDASHIES_SHM_RING_SIZE (consumer sanity check)
+
+  IrdashiesShmFrameSlot frames[IRDASHIES_SHM_RING_SIZE];
+
+  uint32_t recenterCounter;    // bumped to request consumer recenter
+
+  // Shared pose for MVP; per-layer pose arrives in layers[] (#04).
+  float posePosition[3];       // metres
+  float poseOrientation[4];    // quaternion x,y,z,w
+  float quadSizeMeters[2];     // width,height in metres
+
+  // Reserved for #04 — layer table (atlas + N per-widget quads).
+  uint32_t layerCount;         // 0..MAX_LAYERS
+  IrdashiesShmLayer layers[IRDASHIES_SHM_MAX_LAYERS];
+};
+
 #pragma pack(pop)

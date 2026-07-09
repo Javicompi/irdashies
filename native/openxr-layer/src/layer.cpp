@@ -133,7 +133,8 @@ static bool readShmFrame(IrdashiesShmHeader& out) {
     return false;
   }
   if (!(out.flags & IRDASHIES_SHM_FLAG_FEEDER_ATTACHED)) return false;
-  if (out.frameNumber == 0) return false;
+  if (out.latestIndex >= IRDASHIES_SHM_RING_SIZE) return false;
+  if (out.frames[out.latestIndex].frameNumber == 0) return false;
   return true;
 }
 
@@ -141,6 +142,12 @@ static bool readShmFrame(IrdashiesShmHeader& out) {
 // Session state
 // ---------------------------------------------------------------------------
 static constexpr uint32_t kFallbackSize = 512;
+
+struct SlotView {
+  uint64_t texHandleVal = 0;  // handle value this view was opened from
+  ID3D11Texture2D* texture = nullptr;
+  ID3D11ShaderResourceView* srv = nullptr;
+};
 
 struct SessionState {
   XrSession session = XR_NULL_HANDLE;
@@ -181,13 +188,11 @@ struct SessionState {
   ID3D11RasterizerState* rasterState = nullptr;  // CULL_NONE (winding-agnostic)
   bool needsSwizzle = false;
 
-  // Shared producer resources (cached; reopened when producer identity changes).
+  // Shared producer resources (cached per ring slot).
   uint32_t feederPid = 0;
-  uint64_t texHandleVal = 0;
   uint64_t fenceHandleVal = 0;
-  ID3D11Texture2D* sharedTexture = nullptr;
-  ID3D11ShaderResourceView* sharedSrv = nullptr;
   ID3D11Fence* fence = nullptr;
+  SlotView slotViews[IRDASHIES_SHM_RING_SIZE];
 };
 static SessionState g;
 
@@ -345,28 +350,32 @@ static bool createBlitPipeline() {
 // Shared texture / fence management
 // ---------------------------------------------------------------------------
 static void closeSharedResources() {
-  release(g.sharedSrv);
-  release(g.sharedTexture);
+  for (auto& sv : g.slotViews) {
+    release(sv.srv);
+    release(sv.texture);
+    sv.texHandleVal = 0;
+  }
   release(g.fence);
   g.feederPid = 0;
-  g.texHandleVal = 0;
   g.fenceHandleVal = 0;
 }
 
-// Opens (or re-opens, if the producer changed) the shared texture + fence by
-// duplicating the producer's handles into this process. Returns true if the
-// shared resources are ready to use.
-static bool ensureSharedResources(const IrdashiesShmHeader& f) {
-  const bool same = g.sharedTexture && g.feederPid == f.feederProcessId &&
-                    g.texHandleVal == f.textureHandle &&
-                    g.fenceHandleVal == f.fenceHandle;
-  if (same) return true;
+// Ensures the shared fence is open (once) and the per-slot texture/SRV are
+// open for the given ring slot. Returns true if resources are ready to use.
+static bool ensureSlotResources(const IrdashiesShmHeader& f, uint32_t slotIdx) {
+  if (slotIdx >= IRDASHIES_SHM_RING_SIZE) return false;
 
-  closeSharedResources();
+  const auto& slot = f.frames[slotIdx];
+  SlotView& sv = g.slotViews[slotIdx];
 
-  // Cross-adapter sharing is not possible. If the producer rendered on a
-  // different GPU than the game (multi-GPU laptop / GPU selection), bail with a
-  // clear message instead of failing obscurely in OpenSharedResource1.
+  // Check if this slot's texture is already open and still valid.
+  const bool slotOk = sv.texture && g.feederPid == f.feederProcessId &&
+                      sv.texHandleVal == slot.textureHandle;
+  const bool fenceOk = g.fence && g.fenceHandleVal == f.fenceHandle;
+
+  if (slotOk && fenceOk) return true;
+
+  // Cross-adapter sharing is not possible.
   if (g.adapterLuid != 0 && f.adapterLuid != g.adapterLuid) {
     static bool logged = false;
     if (!logged) {
@@ -389,44 +398,63 @@ static bool ensureSharedResources(const IrdashiesShmHeader& f) {
     return false;
   }
 
-  HANDLE dupTex = nullptr;
-  HANDLE dupFence = nullptr;
-  DuplicateHandle(feeder, (HANDLE)(uintptr_t)f.textureHandle,
-                  GetCurrentProcess(), &dupTex, 0, FALSE, DUPLICATE_SAME_ACCESS);
-  DuplicateHandle(feeder, (HANDLE)(uintptr_t)f.fenceHandle, GetCurrentProcess(),
-                  &dupFence, 0, FALSE, DUPLICATE_SAME_ACCESS);
-  CloseHandle(feeder);
+  // Open the fence once (shared across all slots).
+  if (!fenceOk) {
+    release(g.fence);
+    HANDLE dupFence = nullptr;
+    DuplicateHandle(feeder, (HANDLE)(uintptr_t)f.fenceHandle, GetCurrentProcess(),
+                    &dupFence, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    if (dupFence && g.device5) {
+      if (SUCCEEDED(g.device5->OpenSharedFence(dupFence, IID_PPV_ARGS(&g.fence)))) {
+        g.fenceHandleVal = f.fenceHandle;
+      }
+    }
+    if (dupFence) CloseHandle(dupFence);
+    if (!g.fence) {
+      static bool loggedFence = false;
+      if (!loggedFence) {
+        loggedFence = true;
+        layerLog("Failed to open shared fence.");
+      }
+      CloseHandle(feeder);
+      return false;
+    }
+  }
 
-  bool ok = false;
-  if (dupTex && dupFence && g.device1 && g.device5) {
-    if (SUCCEEDED(g.device1->OpenSharedResource1(
-            dupTex, IID_PPV_ARGS(&g.sharedTexture))) &&
-        SUCCEEDED(g.device->CreateShaderResourceView(
-            g.sharedTexture, nullptr, &g.sharedSrv)) &&
-        SUCCEEDED(
-            g.device5->OpenSharedFence(dupFence, IID_PPV_ARGS(&g.fence)))) {
-      g.feederPid = f.feederProcessId;
-      g.texHandleVal = f.textureHandle;
-      g.fenceHandleVal = f.fenceHandle;
-      ok = true;
-      layerLog("Opened shared texture %ux%u format %u from producer PID %u.", f.width,
-               f.height, f.format, f.feederProcessId);
+  // Open this slot's texture if needed.
+  if (!slotOk) {
+    release(sv.srv);
+    release(sv.texture);
+    sv.texHandleVal = 0;
+
+    HANDLE dupTex = nullptr;
+    DuplicateHandle(feeder, (HANDLE)(uintptr_t)slot.textureHandle,
+                    GetCurrentProcess(), &dupTex, 0, FALSE, DUPLICATE_SAME_ACCESS);
+
+    if (dupTex && g.device1) {
+      if (SUCCEEDED(g.device1->OpenSharedResource1(
+              dupTex, IID_PPV_ARGS(&sv.texture))) &&
+          SUCCEEDED(g.device->CreateShaderResourceView(
+              sv.texture, nullptr, &sv.srv))) {
+        sv.texHandleVal = slot.textureHandle;
+        g.feederPid = f.feederProcessId;
+        layerLog("Opened shared texture slot %u: %ux%u format %u from producer PID %u.",
+                 slotIdx, slot.width, slot.height, slot.format,
+                 f.feederProcessId);
+      }
+    }
+    if (dupTex) CloseHandle(dupTex);
+    if (!sv.texture) {
+      static bool loggedTex = false;
+      if (!loggedTex) {
+        loggedTex = true;
+        layerLog("Failed to open shared texture slot %u.", slotIdx);
+      }
     }
   }
-  // Once OpenShared* succeeds, D3D holds its own reference; close our dups.
-  if (dupTex) CloseHandle(dupTex);
-  if (dupFence) CloseHandle(dupFence);
-  if (!ok) {
-    static bool logged = false;
-    if (!logged) {
-      logged = true;
-      layerLog(
-          "Failed to open shared texture/fence (dupTex=%d dupFence=%d).",
-          dupTex != nullptr, dupFence != nullptr);
-    }
-    closeSharedResources();
-  }
-  return ok;
+
+  CloseHandle(feeder);
+  return sv.texture && g.fence;
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +543,12 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   }
 
   IrdashiesShmHeader frame{};
-  const bool haveFrame = readShmFrame(frame) && ensureSharedResources(frame);
+  bool haveFrame = readShmFrame(frame);
+  uint32_t slotIdx = 0;
+  if (haveFrame) {
+    slotIdx = frame.latestIndex;
+    haveFrame = ensureSlotResources(frame, slotIdx);
+  }
 
   // Recenter request: pin the quad in front of the current head pose.
   // Like OpenKneeboard: anchor X/Z and yaw update every recenter; Y is
@@ -541,9 +574,13 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     }
   }
 
+  const auto& slot = haveFrame ? frame.frames[slotIdx] : frame.frames[0];
+  const uint32_t w = haveFrame ? slot.width : kFallbackSize;
+  const uint32_t h = haveFrame ? slot.height : kFallbackSize;
+
   int64_t fmt = g.swapchainFormat;
   if (haveFrame) {
-    const DXGI_FORMAT srcFmt = (DXGI_FORMAT)frame.format;
+    const DXGI_FORMAT srcFmt = (DXGI_FORMAT)slot.format;
     fmt = pickFormat(srcFmt);
     const DXGI_FORMAT dstFmt = (DXGI_FORMAT)fmt;
     g.needsSwizzle = (srcFmt != dstFmt) &&
@@ -553,9 +590,6 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
                       dstFmt == DXGI_FORMAT_R8G8B8A8_UNORM);
   }
   if (fmt == 0) fmt = pickFormat();
-
-  const uint32_t w = haveFrame ? frame.width : kFallbackSize;
-  const uint32_t h = haveFrame ? frame.height : kFallbackSize;
   if (!ensureSwapchain(w, h, fmt)) {
     return g_next_xrEndFrame(session, frameEndInfo);
   }
@@ -586,7 +620,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->VSSetShader(g.vs, nullptr, 0);
     dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
-    dc->PSSetShaderResources(0, 1, &g.sharedSrv);
+    dc->PSSetShaderResources(0, 1, &g.slotViews[slotIdx].srv);
     dc->PSSetSamplers(0, 1, &g.sampler);
     dc->Draw(3, 0);
 

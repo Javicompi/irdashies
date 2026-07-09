@@ -49,12 +49,20 @@ int main() {
   f = *shm;
   if (mutex) ReleaseMutex(mutex);
 
-  printf("SHM: magic=0x%08x version=%u frame=%llu feederPid=%u\n", f.magic,
-         f.version, (unsigned long long)f.frameNumber, f.feederProcessId);
-  printf("     tex=%ux%u format=%u fenceValue=%llu\n", f.width, f.height,
-         f.format, (unsigned long long)f.fenceValue);
-  if (f.magic != IRDASHIES_SHM_MAGIC || f.frameNumber == 0) {
-    printf("FAIL: SHM not valid / no frame yet\n");
+  printf("SHM: magic=0x%08x version=%u feederPid=%u ringSize=%u\n", f.magic,
+         f.version, f.feederProcessId, f.ringSize);
+  printf("     latestIndex=%u fenceValue=%llu\n", f.latestIndex,
+         (unsigned long long)f.fenceValue);
+  if (f.magic != IRDASHIES_SHM_MAGIC || f.latestIndex >= IRDASHIES_SHM_RING_SIZE) {
+    printf("FAIL: SHM not valid / bad ring index\n");
+    return 1;
+  }
+  const auto& slot = f.frames[f.latestIndex];
+  printf("     slot %u: tex=%ux%u format=%u frameNumber=%llu\n",
+         f.latestIndex, slot.width, slot.height, slot.format,
+         (unsigned long long)slot.frameNumber);
+  if (slot.frameNumber == 0) {
+    printf("FAIL: no frame in slot yet\n");
     return 1;
   }
 
@@ -82,7 +90,7 @@ int main() {
   }
   HANDLE dupTex = nullptr;
   HANDLE dupFence = nullptr;
-  DuplicateHandle(feeder, (HANDLE)(uintptr_t)f.textureHandle,
+  DuplicateHandle(feeder, (HANDLE)(uintptr_t)slot.textureHandle,
                   GetCurrentProcess(), &dupTex, 0, FALSE, DUPLICATE_SAME_ACCESS);
   DuplicateHandle(feeder, (HANDLE)(uintptr_t)f.fenceHandle, GetCurrentProcess(),
                   &dupFence, 0, FALSE, DUPLICATE_SAME_ACCESS);

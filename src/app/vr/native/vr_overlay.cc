@@ -62,6 +62,14 @@ void release(T*& p) {
   }
 }
 
+struct Slot {
+  ID3D11Texture2D* texture = nullptr;
+  HANDLE handle = nullptr;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+};
+
 struct State {
   ID3D11Device* device = nullptr;
   ID3D11Device1* device1 = nullptr;
@@ -69,11 +77,9 @@ struct State {
   ID3D11DeviceContext* context = nullptr;
   ID3D11DeviceContext4* context4 = nullptr;
 
-  ID3D11Texture2D* sharedTexture = nullptr;
-  HANDLE textureHandle = nullptr;
-  DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-  uint32_t width = 0;
-  uint32_t height = 0;
+  Slot slots[IRDASHIES_SHM_RING_SIZE];
+  uint32_t writeIndex = 0;
+  uint64_t frameCounter = 0;
 
   ID3D11Fence* fence = nullptr;
   HANDLE fenceHandle = nullptr;
@@ -122,11 +128,17 @@ void teardown() {
     CloseHandle(g.mutex);
     g.mutex = nullptr;
   }
-  release(g.sharedTexture);
-  if (g.textureHandle) {
-    CloseHandle(g.textureHandle);
-    g.textureHandle = nullptr;
+  for (auto& slot : g.slots) {
+    release(slot.texture);
+    if (slot.handle) {
+      CloseHandle(slot.handle);
+      slot.handle = nullptr;
+    }
+    slot.width = slot.height = 0;
+    slot.format = DXGI_FORMAT_UNKNOWN;
   }
+  g.writeIndex = 0;
+  g.frameCounter = 0;
   release(g.fence);
   if (g.fenceHandle) {
     CloseHandle(g.fenceHandle);
@@ -137,8 +149,6 @@ void teardown() {
   release(g.device5);
   release(g.device1);
   release(g.device);
-  g.format = DXGI_FORMAT_UNKNOWN;
-  g.width = g.height = 0;
   g.fenceValue = 0;
 }
 
@@ -211,6 +221,7 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
   g.shm->feederProcessId = GetCurrentProcessId();
   g.shm->adapterLuid = luid;
   g.shm->fenceHandle = (uint64_t)(uintptr_t)g.fenceHandle;
+  g.shm->ringSize = IRDASHIES_SHM_RING_SIZE;
   if (info.Length() > 0 && info[0].IsObject()) {
     writePose(info[0].As<Napi::Object>());
   } else {
@@ -298,14 +309,18 @@ Napi::Value SubmitFrame(const Napi::CallbackInfo& info) {
   if (vx + vw > sd.Width) vw = sd.Width - vx;
   if (vy + vh > sd.Height) vh = sd.Height - vy;
 
-  // (Re)create our shared texture if the size/format changed. The handle then
-  // changes too, so the consumer re-opens it.
-  if (!g.sharedTexture || g.width != vw || g.height != vh ||
-      g.format != sd.Format) {
-    release(g.sharedTexture);
-    if (g.textureHandle) {
-      CloseHandle(g.textureHandle);
-      g.textureHandle = nullptr;
+  // Advance to the next slot first, so latestIndex keeps pointing at the
+  // frame the consumer may still be reading.
+  g.writeIndex = (g.writeIndex + 1) % IRDASHIES_SHM_RING_SIZE;
+  Slot& slot = g.slots[g.writeIndex];
+
+  // (Re)create this slot's texture if size/format changed.
+  if (!slot.texture || slot.width != vw || slot.height != vh ||
+      slot.format != sd.Format) {
+    release(slot.texture);
+    if (slot.handle) {
+      CloseHandle(slot.handle);
+      slot.handle = nullptr;
     }
 
     D3D11_TEXTURE2D_DESC td{};
@@ -319,27 +334,27 @@ Napi::Value SubmitFrame(const Napi::CallbackInfo& info) {
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     td.MiscFlags =
         D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
-    if (FAILED(g.device->CreateTexture2D(&td, nullptr, &g.sharedTexture))) {
+    if (FAILED(g.device->CreateTexture2D(&td, nullptr, &slot.texture))) {
       release(srcTex);
       return Napi::Boolean::New(env, false);
     }
     IDXGIResource1* res = nullptr;
-    if (SUCCEEDED(g.sharedTexture->QueryInterface(IID_PPV_ARGS(&res)))) {
+    if (SUCCEEDED(slot.texture->QueryInterface(IID_PPV_ARGS(&res)))) {
       res->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ, nullptr,
-                              &g.textureHandle);
+                              &slot.handle);
     }
     release(res);
-    g.width = vw;
-    g.height = vh;
-    g.format = sd.Format;
-    producerLog("created shared texture %ux%u format=%u", vw, vh,
-                (unsigned)sd.Format);
+    slot.width = vw;
+    slot.height = vh;
+    slot.format = sd.Format;
+    producerLog("created shared texture slot %u: %ux%u format=%u", g.writeIndex,
+                vw, vh, (unsigned)sd.Format);
 
     if (g.mutex) WaitForSingleObject(g.mutex, INFINITE);
-    g.shm->textureHandle = (uint64_t)(uintptr_t)g.textureHandle;
-    g.shm->width = vw;
-    g.shm->height = vh;
-    g.shm->format = (uint32_t)sd.Format;
+    g.shm->frames[g.writeIndex].textureHandle = (uint64_t)(uintptr_t)slot.handle;
+    g.shm->frames[g.writeIndex].width = vw;
+    g.shm->frames[g.writeIndex].height = vh;
+    g.shm->frames[g.writeIndex].format = (uint32_t)sd.Format;
     if (g.mutex) ReleaseMutex(g.mutex);
   }
 
@@ -350,23 +365,25 @@ Napi::Value SubmitFrame(const Napi::CallbackInfo& info) {
   box.right = vx + vw;
   box.bottom = vy + vh;
   box.back = 1;
-  g.context->CopySubresourceRegion(g.sharedTexture, 0, 0, 0, 0, srcTex, 0, &box);
+  g.context->CopySubresourceRegion(slot.texture, 0, 0, 0, 0, srcTex, 0, &box);
   release(srcTex);
 
   ++g.fenceValue;
   g.context4->Signal(g.fence, g.fenceValue);
   g.context->Flush();
 
+  ++g.frameCounter;
   if (g.mutex) WaitForSingleObject(g.mutex, INFINITE);
+  g.shm->frames[g.writeIndex].frameNumber = g.frameCounter;
   g.shm->fenceValue = g.fenceValue;
-  g.shm->frameNumber++;
+  g.shm->latestIndex = g.writeIndex;
   g.shm->flags |= IRDASHIES_SHM_FLAG_FEEDER_ATTACHED;
   if (g.mutex) ReleaseMutex(g.mutex);
 
   static bool firstOk = false;
   if (!firstOk) {
     firstOk = true;
-    producerLog("first frame published %ux%u", g.width, g.height);
+    producerLog("first frame published slot=%u %ux%u", g.writeIndex, vw, vh);
   }
   return Napi::Boolean::New(env, true);
 }
