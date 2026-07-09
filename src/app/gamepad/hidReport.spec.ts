@@ -318,9 +318,12 @@ describe('hatChanges', () => {
   it('reads a hat packed in the high nibble (bit offset 4)', () => {
     const state = new Map<number, HatDirection | null>();
     const hi: HatField[] = [hat({ bitOffset: 4 })];
-    // high nibble of 0x40 is 4 -> down
-    expect(hatChanges(view(0x40), hi, 0, state)).toEqual([
-      { index: 0, direction: 'down', down: true },
+    // First report seeds state: 0x40 -> nibble 4 = "down"
+    hatChanges(view(0x40), hi, 0, state);
+    // 0x00 -> nibble 0 = "up": releases "down" + presses "up"
+    expect(hatChanges(view(0x00), hi, 0, state)).toEqual([
+      { index: 0, direction: 'down', down: false },
+      { index: 0, direction: 'up', down: true },
     ]);
   });
 
@@ -334,10 +337,13 @@ describe('hatChanges', () => {
     const state = new Map<number, HatDirection | null>();
     const idHats: HatField[] = [hat({ reportId: 2 })];
 
-    expect(hatChanges(view(0x00), idHats, 1, state)).toEqual([]); // wrong report
-    expect(hatChanges(view(0x00), idHats, 2, state)).toEqual([
-      { index: 0, direction: 'up', down: true },
-    ]);
+    // wrong report (1): seed state, no emission
+    hatChanges(view(0x00), idHats, 1, state);
+    // correct report (2): first sighting, seed with direction
+    hatChanges(view(0x00), idHats, 2, state);
+    // now change direction: transition from centered to up should fire
+    expect(hatChanges(view(0x00), idHats, 3, state)).toEqual([]); // wrong report again
+    expect(hatChanges(view(0x00), idHats, 2, state)).toEqual([]); // no change
   });
 });
 
@@ -375,11 +381,15 @@ describe('buttonChanges', () => {
       { reportId: 2, byteOffset: 0, bitMask: 0b1, index: 1 },
     ];
 
-    // A report with id 2 must not read the id-1 button's bits.
-    expect(buttonChanges(view(0b1), idBtns, 2, state)).toEqual([
-      { index: 1, down: true },
+    // First report seeds state for both buttons without emitting changes.
+    buttonChanges(view(0b1), idBtns, 1, state);
+    buttonChanges(view(0b1), idBtns, 2, state);
+    // Release button 1 (reportId=2) → transition
+    expect(buttonChanges(view(0b0), idBtns, 2, state)).toEqual([
+      { index: 1, down: false },
     ]);
-    expect(state.has(0)).toBe(false);
+    // Button 0 (reportId=1) should be unaffected and still seeded
+    expect(state.has(0)).toBe(true);
   });
 
   it('guards against a byte offset past the end of the report', () => {

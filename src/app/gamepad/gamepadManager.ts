@@ -2,6 +2,13 @@ import type { KeybindingActionId, KeybindingsMap } from '@irdashies/types';
 import { gamepadComboToken, isGamepadBinding } from '@irdashies/shared';
 import logger from '../logger';
 import { GamepadHost } from './gamepadHost';
+import { appendFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const D = (...a: unknown[]) => { try { appendFileSync(join(tmpdir(),'irdashies-gpad.log'), `[GPAD] ${a.join(' ')}\n`); } catch {} };
+
+let didFirstSync = false;
 
 export class GamepadManager {
   private map = new Map<string, KeybindingActionId>();
@@ -14,16 +21,24 @@ export class GamepadManager {
 
   public syncBindings(bindings: KeybindingsMap): void {
     this.map.clear();
+    let c = 0;
     for (const [actionId, entry] of Object.entries(bindings)) {
       if (isGamepadBinding(entry.accelerator)) {
         this.map.set(entry.accelerator, actionId as KeybindingActionId);
+        c++;
+        if (!didFirstSync) D(`bind: ${entry.accelerator} -> ${actionId}`);
       }
+    }
+    if (!didFirstSync) {
+      didFirstSync = true;
+      D(`syncBindings done: ${c} gamepad bindings, mapSize=${this.map.size}`);
     }
     this.held.clear();
   }
 
   private handleButton(token: string, down: boolean): void {
     if (this.onCapture) {
+      D(`capture: ${token} down=${down}`);
       if (down) {
         this.captureHeld.add(token);
       } else if (this.captureHeld.size > 0) {
@@ -39,8 +54,10 @@ export class GamepadManager {
       return;
     }
     this.held.add(token);
-    const actionId = this.map.get(gamepadComboToken(this.held));
-    if (actionId) this.triggerAction(actionId);
+    const combo = gamepadComboToken(this.held);
+    D(`btn: token=${token} combo=${combo} mapHas=${this.map.has(combo)} mapSize=${this.map.size}`);
+    const actionId = this.map.get(combo);
+    if (actionId) { D(`FIRE: ${actionId}`); this.triggerAction(actionId); }
   }
 
   public start(): void {

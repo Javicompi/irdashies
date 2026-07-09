@@ -200,6 +200,10 @@ export interface ButtonChange {
  * both edges to know which buttons are still held alongside a newly-pressed
  * one. `state` is mutated in place to hold the latest pressed/released value
  * for each button index.
+ *
+ * The first report for each button only seeds the state map without emitting
+ * a change — this prevents phantom presses from buttons that are always-down
+ * in the device's idle HID report (e.g. certain Fanatec wheels).
  */
 export function buttonChanges(
   data: DataView,
@@ -214,7 +218,12 @@ export function buttonChanges(
     if (button.byteOffset >= data.byteLength) continue;
 
     const isDown = (data.getUint8(button.byteOffset) & button.bitMask) !== 0;
-    const wasDown = state.get(button.index) ?? false;
+    if (!state.has(button.index)) {
+      // First sighting: seed state without emitting a transition.
+      state.set(button.index, isDown);
+      continue;
+    }
+    const wasDown = state.get(button.index)!;
     if (isDown !== wasDown) {
       changes.push({ index: button.index, down: isDown });
     }
@@ -253,6 +262,8 @@ export interface HatChange extends HatPress {
  * logical range) fires a release with no matching press. `state` is mutated
  * in place. Releases let a d-pad direction be tracked as held, same as a
  * button, so it can be a combo (chord) member.
+ *
+ * The first report only seeds the state map without emitting transitions.
  */
 export function hatChanges(
   data: DataView,
@@ -276,7 +287,12 @@ export function hatChanges(
       offset < HAT_DIRECTIONS.length
         ? HAT_DIRECTIONS[offset]
         : null;
-    const previous = state.get(hat.index) ?? null;
+    if (!state.has(hat.index)) {
+      // First sighting: seed state without emitting a transition.
+      state.set(hat.index, direction);
+      continue;
+    }
+    const previous = state.get(hat.index)!;
 
     if (direction !== previous) {
       if (previous)
