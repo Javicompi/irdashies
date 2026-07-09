@@ -99,7 +99,8 @@ export function startVrOverlay(
     height: texH,
     show: false,
     frame: false,
-    backgroundColor: '#0f1117',
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences,
   });
 
@@ -113,9 +114,9 @@ export function startVrOverlay(
   wc.on('did-finish-load', () => {
     if (osrWindow && !osrWindow.isDestroyed()) {
       wc.setZoomFactor(zoomFactor);
-      // Solid dark background for VR overlay (removes whitish tint from
-      // premultiplied alpha blend with the bright VR scene).
-      wc.insertCSS('html, body { background: #0f1117 !important; }');
+      // In VR the premultiplied alpha blend washes out semi-transparent widget
+      // backgrounds; force 100% opacity so widgets are crisp and solid.
+      wc.insertCSS('* { --bg-opacity: 1 !important; }');
     }
   });
   let loggedFirstPaint = false;
