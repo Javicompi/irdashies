@@ -499,9 +499,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       g.recenterPose.position.z = loc.pose.position.z;
       g.recenterEyeY = loc.pose.position.y;
       g.hasRecenterPose = true;
-      layerLog("Recentered: yaw=%.2f rad (%.0f deg), pos=(%.2f, %.2f, %.2f)",
-               g.recenterYaw, g.recenterYaw * 57.29578f,
-               loc.pose.position.x, loc.pose.position.y, loc.pose.position.z);
+      layerLog("Recentered quad anchor.");
     }
   }
 
@@ -587,12 +585,6 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       // Negate yaw for orientation: compensates the implicit rotation in the
       // position formula so the quad faces towards the user, not away.
       quad.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
-      static float loggedYaw = -999.0f;
-      if (std::abs(g.recenterYaw - loggedYaw) > 0.01f) {
-        loggedYaw = g.recenterYaw;
-        layerLog("Quad orient: yaw=%.2f rad, quat=(0, %.3f, 0, %.3f)",
-                 g.recenterYaw, std::sin(halfYaw), std::cos(halfYaw));
-      }
       quad.pose.position = {
           g.recenterPose.position.x + h * cy + d * sy,
           g.recenterEyeY + v,
