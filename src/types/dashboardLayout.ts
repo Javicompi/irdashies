@@ -21,6 +21,8 @@ export interface DashboardWidget {
   enabled: boolean;
   /** When true, widget remains visible even when iRacing is not running. */
   alwaysEnabled?: boolean;
+  /** Show this widget in the VR overlay (defaults to true for all widgets). */
+  vrEnabled?: boolean;
   /** The layout of the window for the widget on the dashboard. */
   layout: WidgetLayout;
   /** Configuration for the widget. */

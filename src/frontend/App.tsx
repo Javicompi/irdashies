@@ -14,6 +14,7 @@ import { ThemeManager } from './components/ThemeManager/ThemeManager';
 import { HideUIWrapper } from './components/HideUIWrapper/HideUIWrapper';
 import { ProfileSwitchOverlay } from './components/ProfileSwitchOverlay/ProfileSwitchOverlay';
 import { OverlayContainer } from './components/OverlayContainer';
+import { VrAtlasContainer } from './components/VrAtlasContainer/VrAtlasContainer';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
 
 /**
@@ -21,6 +22,10 @@ import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
  */
 const isSettingsWindow = () => {
   return window.location.hash.startsWith('#/settings');
+};
+
+const isVrAtlasWindow = () => {
+  return window.location.hash.startsWith('#/vr-atlas');
 };
 
 /**
@@ -54,14 +59,38 @@ const OverlayApp = () => {
   );
 };
 
+/** Lightweight renderer for the VR atlas OSR window. */
+const VrAtlasApp = () => {
+  return (
+    <ThemeManager>
+      <VrAtlasContainer />
+    </ThemeManager>
+  );
+};
+
 const App = () => {
   const isSettings = isSettingsWindow();
+  const isVrAtlas = isVrAtlasWindow();
 
   if (isSettings) {
     return (
       <ErrorBoundary label="settings" resetAfterMs={2000}>
         <DashboardProvider bridge={window.dashboardBridge}>
           <SettingsApp />
+        </DashboardProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  if (isVrAtlas) {
+    return (
+      <ErrorBoundary label="vr-atlas" resetAfterMs={2000}>
+        <DashboardProvider bridge={window.dashboardBridge}>
+          <RunningStateProvider bridge={window.irsdkBridge}>
+            <SessionProvider bridge={window.irsdkBridge} />
+            <TelemetryProvider bridge={window.irsdkBridge} />
+            <VrAtlasApp />
+          </RunningStateProvider>
         </DashboardProvider>
       </ErrorBoundary>
     );

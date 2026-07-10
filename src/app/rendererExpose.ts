@@ -57,4 +57,10 @@ export function exposeInMainWorld() {
   };
 
   contextBridge.exposeInMainWorld('pitLaneBridge', pitLaneBridge);
+
+  contextBridge.exposeInMainWorld('vrAtlasBridge', {
+    reportLayout: (
+      layers: { widgetId: string; sourceRect: [number, number, number, number] }[]
+    ) => ipcRenderer.send('vr-atlas-layout', layers),
+  });
 }

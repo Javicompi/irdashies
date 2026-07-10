@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import path from 'path';
 import logger from '../logger';
 import type { OverlayManager } from '../overlayManager';
@@ -22,6 +22,34 @@ const VR_MAX_TEXTURE_DIM = 2048;
 
 let osrWindow: BrowserWindow | null = null;
 let overlayManagerRef: OverlayManager | null = null;
+
+// Per-widget atlas layout reported by the VR atlas page.
+interface AtlasLayer {
+  widgetId: string;
+  sourceRect: [number, number, number, number];
+}
+let atlasLayout: AtlasLayer[] = [];
+let currentVrPose: VrPose | undefined;
+
+function publishVrLayers(): void {
+  if (!osrWindow) return;
+  const pose = currentVrPose ?? { position: [0, 0, -1.5], orientation: [0, 0, 0, 1], size: [0.5, 0.5] };
+  const layers = atlasLayout.map((l) => ({
+    position: pose.position!,
+    orientation: pose.orientation!,
+    size: pose.size!,
+    sourceRect: l.sourceRect,
+    opacity: 1,
+    visible: 1,
+  }));
+  VrOverlayNative.setLayers(layers);
+}
+
+// Listen for atlas layout reports from the VR atlas renderer page.
+ipcMain.on('vr-atlas-layout', (_event, layers: AtlasLayer[]) => {
+  atlasLayout = layers;
+  publishVrLayers();
+});
 
 // Quad height follows the primary display aspect (height / width) so the texture
 // is never stretched. Captured at start; needed to recompute size on the fly.
@@ -81,23 +109,13 @@ export function startVrOverlay(
 
   quadAspect = displayH / displayW;
   const pose = poseFromSettings(settings);
+  currentVrPose = pose;
 
   try {
     if (!VrOverlayNative.start(pose)) {
       logger.error('[VR] native overlay start returned false');
       return;
     }
-    // Publish a single layer covering the full atlas texture.
-    VrOverlayNative.setLayers([
-      {
-        position: pose.position ?? [0, 0, -1.5],
-        orientation: pose.orientation ?? [0, 0, 0, 1],
-        size: pose.size ?? [0.5, 0.5],
-        sourceRect: [0, 0, texW, texH],
-        opacity: 1,
-        visible: 1,
-      },
-    ]);
   } catch (err) {
     logger.error('[VR] failed to start native overlay', err);
     return;
@@ -176,10 +194,11 @@ export function startVrOverlay(
   wc.setFrameRate(60);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    wc.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    wc.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/vr-atlas`);
   } else {
     osrWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+      { hash: '/vr-atlas' }
     );
   }
 

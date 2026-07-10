@@ -22,5 +22,9 @@ declare global {
     /** Present only in the hidden WebHID host renderer (src/hidHost.ts). */
     gamepadHost?: GamepadHostBridge;
     chromiumFlagsBridge: ChromiumFlagsBridge;
+    /** VR atlas page → main process layout reporter. */
+    vrAtlasBridge?: {
+      reportLayout: (layers: { widgetId: string; sourceRect: [number, number, number, number] }[]) => void;
+    };
   }
 }
