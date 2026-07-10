@@ -203,6 +203,11 @@ struct SessionState {
   uint32_t maxLayerCount = 0;
   // Reused per-frame layer vector (reserved, no heap alloc on hot path).
   std::vector<const XrCompositionLayerBaseHeader*> outLayers;
+
+  // Frame cache: skips redundant work when no new producer content arrived.
+  uint64_t lastConsumedFrameNumber = 0;
+  uint64_t lastConsumedFenceValue = 0;
+  SlotView* lastConsumedSlot = nullptr;
 };
 static SessionState g;
 
@@ -553,11 +558,39 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   }
 
   IrdashiesShmHeader frame{};
-  bool haveFrame = readShmFrame(frame);
+  const bool shmOk = readShmFrame(frame);
   uint32_t slotIdx = 0;
+  bool newContent = false;
+  bool haveFrame = shmOk;
+
   if (haveFrame) {
     slotIdx = frame.latestIndex;
-    haveFrame = ensureSlotResources(frame, slotIdx);
+    const auto& fslot = frame.frames[slotIdx];
+    newContent = (fslot.frameNumber != g.lastConsumedFrameNumber) ||
+                 (g.lastConsumedSlot == nullptr);
+
+    if (newContent) {
+      // New frame (or first frame): open resources and update cache.
+      haveFrame = ensureSlotResources(frame, slotIdx);
+      if (haveFrame) {
+        g.lastConsumedFrameNumber = fslot.frameNumber;
+        g.lastConsumedFenceValue = frame.fenceValue;
+        g.lastConsumedSlot = &g.slotViews[slotIdx];
+      }
+    } else {
+      // Same frame as before: reuse cached slot, skip resource check.
+      haveFrame = (g.lastConsumedSlot != nullptr &&
+                   g.lastConsumedSlot->srv != nullptr);
+    }
+  } else {
+    g.lastConsumedSlot = nullptr;
+  }
+
+  // Invalidate the cache if the producer identity changed (feeder PID or
+  // this slot's texture handle differs from what we opened against).
+  if (g.lastConsumedSlot && (g.feederPid != frame.feederProcessId ||
+      g.lastConsumedSlot->texHandleVal != frame.frames[slotIdx].textureHandle)) {
+    g.lastConsumedSlot = nullptr;
   }
 
   // Recenter request: pin the quad in front of the current head pose.
@@ -616,8 +649,9 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   wait.timeout = XR_INFINITE_DURATION;
   g_next_xrWaitSwapchainImage(g.swapchain, &wait);
 
-  // Wait on the GPU until the producer signalled this frame is ready.
-  g.context4->Wait(g.fence, frame.fenceValue);
+  // Wait on the GPU only when the producer published a new frame.
+  // On unchanged-content frames the cached slot is already signalled.
+  if (newContent) g.context4->Wait(g.fence, frame.fenceValue);
 
   // Record the blit on the deferred context (default pipeline state) and
   // execute with RestoreContextState=TRUE so the game's immediate context
@@ -632,7 +666,8 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   dc->VSSetShader(g.vs, nullptr, 0);
   dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
-  dc->PSSetShaderResources(0, 1, &g.slotViews[slotIdx].srv);
+  dc->PSSetShaderResources(0, 1,
+      newContent ? &g.slotViews[slotIdx].srv : &g.lastConsumedSlot->srv);
   dc->PSSetSamplers(0, 1, &g.sampler);
   dc->Draw(3, 0);
 
