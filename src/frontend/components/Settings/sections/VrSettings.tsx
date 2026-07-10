@@ -55,7 +55,7 @@ export const VrSettings = () => {
           value={settings.width}
           min={0.5}
           max={4}
-          step={0.1}
+          step={0.01}
           onChange={(width) => update({ width })}
         />
 
@@ -65,7 +65,7 @@ export const VrSettings = () => {
           value={settings.distance}
           min={0.5}
           max={4}
-          step={0.1}
+          step={0.01}
           onChange={(distance) => update({ distance })}
         />
 
@@ -75,7 +75,7 @@ export const VrSettings = () => {
           value={settings.horizontal}
           min={-2}
           max={2}
-          step={0.1}
+          step={0.01}
           onChange={(horizontal) => update({ horizontal })}
         />
 
@@ -85,7 +85,7 @@ export const VrSettings = () => {
           value={settings.vertical}
           min={-2}
           max={2}
-          step={0.1}
+          step={0.01}
           onChange={(vertical) => update({ vertical })}
         />
 
