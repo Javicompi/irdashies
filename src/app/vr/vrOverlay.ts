@@ -21,6 +21,7 @@ const VR_SUPERSAMPLE = 8;
 const VR_MAX_TEXTURE_DIM = 2048;
 
 let osrWindow: BrowserWindow | null = null;
+let overlayManagerRef: OverlayManager | null = null;
 
 // Quad height follows the primary display aspect (height / width) so the texture
 // is never stretched. Captured at start; needed to recompute size on the fly.
@@ -62,6 +63,9 @@ export function startVrOverlay(
   settings?: VrOverlaySettings
 ): void {
   if (osrWindow) return;
+
+  overlayManagerRef = overlayManager;
+  overlayManager.suppressDesktopOverlays();
 
   // Lay out at the primary display size (so widget pixel coordinates land where
   // intended) but render into a larger backing texture for supersampling.
@@ -218,4 +222,6 @@ export function stopVrOverlay(): void {
     osrWindow.destroy();
     osrWindow = null;
   }
+  overlayManagerRef?.restoreDesktopOverlays();
+  overlayManagerRef = null;
 }

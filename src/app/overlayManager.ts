@@ -45,6 +45,7 @@ export class OverlayManager {
   private displayFullBounds = new Map<number, Electron.Rectangle>();
   private currentSettingsWindow: BrowserWindow | undefined;
   private currentDashboard: DashboardLayout | undefined;
+  private desktopSuppressed = false;
   private isLocked = true;
   private isQuitting = false;
   private skipTaskbar = true;
@@ -79,6 +80,7 @@ export class OverlayManager {
    */
   public createOverlays(dashboardLayout: DashboardLayout): void {
     this.currentDashboard = dashboardLayout;
+    if (this.desktopSuppressed) return;
     const { generalSettings } = dashboardLayout;
     this.skipTaskbar = generalSettings?.skipTaskbar ?? true;
     this.overlayAlwaysOnTop = generalSettings?.overlayAlwaysOnTop ?? true;
@@ -651,6 +653,22 @@ export class OverlayManager {
     this.displayFullBounds.clear();
   }
 
+  /** Close display overlays for VR-only mode. Saves dashboard for restore. */
+  public suppressDesktopOverlays(): void {
+    this.desktopSuppressed = true;
+    this.closeAllOverlays();
+    logger.info('[OverlayManager] Desktop overlays suppressed (VR-only mode).');
+  }
+
+  /** Recreate display overlays when exiting VR-only mode. */
+  public restoreDesktopOverlays(): void {
+    this.desktopSuppressed = false;
+    if (this.currentDashboard) {
+      this.createOverlays(this.currentDashboard);
+      logger.info('[OverlayManager] Desktop overlays restored.');
+    }
+  }
+
   public markQuitting(): void {
     this.isQuitting = true;
   }
@@ -680,6 +698,7 @@ export class OverlayManager {
    */
   public ensureDisplayWindows(dashboardLayout: DashboardLayout): void {
     this.currentDashboard = dashboardLayout;
+    if (this.desktopSuppressed) return;
     const allDisplays = screen.getAllDisplays();
     const primaryDisplay = screen.getPrimaryDisplay();
 
