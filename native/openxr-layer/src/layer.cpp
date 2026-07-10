@@ -640,63 +640,38 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   XrSwapchainImageReleaseInfo rel{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
   g_next_xrReleaseSwapchainImage(g.swapchain, &rel);
 
-  // Build per-widget quads from the layer table. Each quad references the
-  // same swapchain but with a different subImage.imageRect (the widget's
-  // sub-rect in the atlas), its own pose, size, and opacity.
+  // Build per-widget quads from the layer table or fall back to shared pose.
   std::vector<XrCompositionLayerQuad> ourQuads;
-  const uint32_t lc = frame.layerCount;
-  if (lc > 0 && lc <= IRDASHIES_SHM_MAX_LAYERS) {
-    for (uint32_t i = 0; i < lc; ++i) {
-      const auto& layer = frame.layers[i];
-      if (!layer.visible) continue;
-      XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
-      q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-      q.space = g.localSpace;
-      q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-      q.subImage.swapchain = g.swapchain;
-      q.subImage.imageRect.offset.x = (int32_t)layer.sourceRect[0];
-      q.subImage.imageRect.offset.y = (int32_t)layer.sourceRect[1];
-      q.subImage.imageRect.extent.width = (int32_t)layer.sourceRect[2];
-      q.subImage.imageRect.extent.height = (int32_t)layer.sourceRect[3];
-      q.subImage.imageArrayIndex = 0;
-      q.pose.position = {layer.posePosition[0], layer.posePosition[1],
-                         layer.posePosition[2]};
-      q.pose.orientation = {layer.poseOrientation[0], layer.poseOrientation[1],
-                            layer.poseOrientation[2], layer.poseOrientation[3]};
-      q.size = {layer.quadSizeMeters[0], layer.quadSizeMeters[1]};
-      ourQuads.push_back(q);
-    }
-  }
+  // TODO(#04): use frame.layers[] when frontend layout is implemented.
+  // For now, always use the shared-pose fallback (proven stable path).
 
-  // Fallback: no layer table → single quad from shared pose fields.
-  if (ourQuads.empty()) {
-    XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-    q.space = g.localSpace;
-    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    q.subImage.swapchain = g.swapchain;
-    q.subImage.imageRect = {{0, 0}, {(int32_t)w, (int32_t)h}};
-    q.subImage.imageArrayIndex = 0;
-    const float hp = frame.posePosition[0];
-    const float vp = frame.posePosition[1];
-    const float dp = -frame.posePosition[2];
-    if (g.hasRecenterPose) {
-      const float cy = std::cos(g.recenterYaw);
-      const float sy = std::sin(g.recenterYaw);
-      const float halfYaw = g.recenterYaw * 0.5f;
-      q.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
-      q.pose.position = {
-          g.recenterPose.position.x + hp * cy + dp * sy,
-          g.recenterEyeY + vp,
-          g.recenterPose.position.z + hp * sy - dp * cy,
-      };
-    } else {
-      q.pose.orientation = {0, 0, 0, 1};
-      q.pose.position = {hp, vp, -dp};
-    }
-    q.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
-    ourQuads.push_back(q);
+  // Single quad from shared pose fields.
+  XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
+  q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+  q.space = g.localSpace;
+  q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+  q.subImage.swapchain = g.swapchain;
+  q.subImage.imageRect = {{0, 0}, {(int32_t)w, (int32_t)h}};
+  q.subImage.imageArrayIndex = 0;
+  const float hp = frame.posePosition[0];
+  const float vert = frame.posePosition[1];
+  const float dp = -frame.posePosition[2];
+  if (g.hasRecenterPose) {
+    const float cy = std::cos(g.recenterYaw);
+    const float sy = std::sin(g.recenterYaw);
+    const float halfYaw = g.recenterYaw * 0.5f;
+    q.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
+    q.pose.position = {
+        g.recenterPose.position.x + hp * cy + dp * sy,
+        g.recenterEyeY + vert,
+        g.recenterPose.position.z + hp * sy - dp * cy,
+    };
+  } else {
+    q.pose.orientation = {0, 0, 0, 1};
+    q.pose.position = {hp, vert, -dp};
   }
+  q.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
+  ourQuads.push_back(q);
 
   std::vector<const XrCompositionLayerBaseHeader*> layers(
       frameEndInfo->layers, frameEndInfo->layers + frameEndInfo->layerCount);
