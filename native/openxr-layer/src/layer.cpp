@@ -664,10 +664,25 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       q.subImage.imageRect.extent.height =
           (int32_t)std::min(layer.sourceRect[3], (float)h);
       q.subImage.imageArrayIndex = 0;
-      q.pose.position = {layer.posePosition[0], layer.posePosition[1],
-                         layer.posePosition[2]};
-      q.pose.orientation = {layer.poseOrientation[0], layer.poseOrientation[1],
-                            layer.poseOrientation[2], layer.poseOrientation[3]};
+      if (g.hasRecenterPose) {
+        const float h = layer.posePosition[0];
+        const float v = layer.posePosition[1];
+        const float d = -layer.posePosition[2];
+        const float cy = std::cos(g.recenterYaw);
+        const float sy = std::sin(g.recenterYaw);
+        const float halfYaw = g.recenterYaw * 0.5f;
+        q.pose.orientation = {0.0f, std::sin(-halfYaw), 0.0f, std::cos(-halfYaw)};
+        q.pose.position = {
+            g.recenterPose.position.x + h * cy + d * sy,
+            g.recenterEyeY + v,
+            g.recenterPose.position.z + h * sy - d * cy,
+        };
+      } else {
+        q.pose.position = {layer.posePosition[0], layer.posePosition[1],
+                           layer.posePosition[2]};
+        q.pose.orientation = {layer.poseOrientation[0], layer.poseOrientation[1],
+                              layer.poseOrientation[2], layer.poseOrientation[3]};
+      }
       q.size = {layer.quadSizeMeters[0], layer.quadSizeMeters[1]};
       ourQuads.push_back(q);
     }
