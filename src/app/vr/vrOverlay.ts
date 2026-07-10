@@ -34,15 +34,18 @@ let currentVrPose: VrPose | undefined;
 function publishVrLayers(): void {
   if (!osrWindow) return;
   const pose = currentVrPose ?? { position: [0, 0, -1.5], orientation: [0, 0, 0, 1], size: [0.5, 0.5] };
-  const layers = atlasLayout.map((l) => ({
-    position: pose.position!,
-    orientation: pose.orientation!,
-    size: pose.size!,
-    sourceRect: l.sourceRect,
-    opacity: 1,
-    visible: 1,
-  }));
-  VrOverlayNative.setLayers(layers);
+  // Publish a single full-atlas layer. Per-widget quads with individual poses
+  // come when per-widget VR placement settings land (future work).
+  VrOverlayNative.setLayers([
+    {
+      position: pose.position!,
+      orientation: pose.orientation!,
+      size: pose.size!,
+      sourceRect: [0, 0, atlasTexW, atlasTexH] as [number, number, number, number],
+      opacity: 1,
+      visible: 1,
+    },
+  ]);
 }
 
 // Listen for atlas layout reports from the VR atlas renderer page.
@@ -54,6 +57,8 @@ ipcMain.on('vr-atlas-layout', (_event, layers: AtlasLayer[]) => {
 // Quad height follows the primary display aspect (height / width) so the texture
 // is never stretched. Captured at start; needed to recompute size on the fly.
 let quadAspect = 9 / 16;
+let atlasTexW = 1920;
+let atlasTexH = 1080;
 
 /**
  * Build a native pose from user settings. The offscreen surface matches the
@@ -105,6 +110,8 @@ export function startVrOverlay(
   scale = Math.max(1, scale);
   const texW = Math.round(displayW * scale);
   const texH = Math.round(displayH * scale);
+  atlasTexW = texW;
+  atlasTexH = texH;
   const zoomFactor = texW / displayW;
 
   quadAspect = displayH / displayW;
