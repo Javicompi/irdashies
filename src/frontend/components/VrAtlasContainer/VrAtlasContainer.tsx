@@ -17,11 +17,13 @@ export const VrAtlasContainer = memo(() => {
   const { running } = useRunningState();
 
   // All enabled widgets; vrEnabled defaults to true (matches pre-P2 behaviour).
+  // Sort by desktop layout position (top-left to bottom-right) so the visual
+  // order matches what the user configured.
   const vrWidgets = useMemo(
     () =>
-      currentDashboard?.widgets.filter(
-        (w) => w.enabled && (w.vrEnabled !== false)
-      ) ?? [],
+      (currentDashboard?.widgets ?? [])
+        .filter((w) => w.enabled && (w.vrEnabled !== false))
+        .sort((a, b) => a.layout.y - b.layout.y || a.layout.x - b.layout.x),
     [currentDashboard?.widgets]
   );
 
