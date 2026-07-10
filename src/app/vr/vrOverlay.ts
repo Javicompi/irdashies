@@ -218,8 +218,11 @@ export function startVrOverlay(
  */
 export function applyVrOverlaySettings(settings?: VrOverlaySettings): void {
   if (!osrWindow) return;
+  const pose = poseFromSettings(settings);
+  currentVrPose = pose;
   try {
-    VrOverlayNative.setPose(poseFromSettings(settings));
+    VrOverlayNative.setPose(pose);
+    publishVrLayers();
   } catch (err) {
     logger.error('[VR] setPose failed', err);
   }
