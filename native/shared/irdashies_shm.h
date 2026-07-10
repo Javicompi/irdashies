@@ -42,7 +42,9 @@ struct IrdashiesShmLayer {
   float poseOrientation[4];    // quaternion x,y,z,w
   float quadSizeMeters[2];     // width, height
   float sourceRect[4];         // x, y, w, h in atlas texels
-  float opacity;               // 0..1
+  float opacity;               // 0..1 — NOT YET read by the consumer; wired up
+                               // with the atlas page (per-layer blit + scissor +
+                               // shader multiply).
   uint32_t visible;            // 0 = skip this layer
 };
 

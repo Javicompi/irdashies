@@ -11,7 +11,8 @@
 // bgra/rgba shared textures from Chromium have no keyed mutex, so no
 // AcquireSync is required. Open the source per frame, copy, release promptly.
 //
-// MVP: a single overlay/quad. Multiple per-widget quads come later.
+// Multi-quad via SHM layer table (`setLayers`); the frontend atlas page is a
+// follow-up.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -414,6 +415,8 @@ Napi::Value SetLayers(const Napi::CallbackInfo& info) {
   Napi::Array arr = info[0].As<Napi::Array>();
   uint32_t n = arr.Length();
   if (n > IRDASHIES_SHM_MAX_LAYERS) n = IRDASHIES_SHM_MAX_LAYERS;
+
+  if (g.mutex) WaitForSingleObject(g.mutex, INFINITE);
   for (uint32_t i = 0; i < n; ++i) {
     Napi::Value v = arr.Get(i);
     if (!v.IsObject()) continue;
@@ -435,6 +438,8 @@ Napi::Value SetLayers(const Napi::CallbackInfo& info) {
         obj.Has("visible") ? obj.Get("visible").As<Napi::Number>().Uint32Value() : 1u;
   }
   g.layerCount = n;
+  if (g.mutex) ReleaseMutex(g.mutex);
+
   return env.Undefined();
 }
 

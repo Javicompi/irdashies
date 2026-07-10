@@ -5,9 +5,9 @@
 //
 // Stage 2 (this file): reads a shared D3D11 texture published by the producer
 // over shared memory (see ../../shared/irdashies_shm.h), opens it on the game's
-// device, waits on the shared fence, and shader-blits it onto the quad. If no
-// producer is running it falls back to an animated solid color so there is
-// always visible feedback.
+// device, waits on the shared fence, and shader-blits it onto the quad.
+// If no producer is running the layer is a pure pass-through (no swapchain,
+// no quad, zero overhead).
 
 #define XR_USE_GRAPHICS_API_D3D11
 #define WIN32_LEAN_AND_MEAN
@@ -146,8 +146,6 @@ static bool readShmFrame(IrdashiesShmHeader& out) {
 // ---------------------------------------------------------------------------
 // Session state
 // ---------------------------------------------------------------------------
-static constexpr uint32_t kFallbackSize = 512;
-
 struct SlotView {
   uint64_t texHandleVal = 0;  // handle value this view was opened from
   ID3D11Texture2D* texture = nullptr;
@@ -166,7 +164,6 @@ struct SessionState {
   ID3D11DeviceContext* deferred = nullptr;
   int64_t adapterLuid = 0;  // game GPU; must match the producer's
   XrSpace localSpace = XR_NULL_HANDLE;
-  XrSpace stageSpace = XR_NULL_HANDLE;
   XrSpace viewSpace = XR_NULL_HANDLE;
 
   // Recenter: when the producer's recenterCounter changes, capture the head
@@ -177,7 +174,7 @@ struct SessionState {
   float recenterYaw = 0;
   float recenterEyeY = 0;
 
-  // Quad swapchain (sized to the shared texture, or kFallbackSize).
+  // Quad swapchain (sized to the shared texture).
   XrSwapchain swapchain = XR_NULL_HANDLE;
   int64_t swapchainFormat = 0;
   uint32_t width = 0;
@@ -191,7 +188,6 @@ struct SessionState {
   ID3D11PixelShader* psSwizzle = nullptr;   // R<->B swizzle variant
   ID3D11SamplerState* sampler = nullptr;
   ID3D11RasterizerState* rasterState = nullptr;  // CULL_NONE (winding-agnostic)
-  bool needsSwizzle = false;
 
   // Shared producer resources (cached per ring slot).
   uint32_t feederPid = 0;
@@ -203,6 +199,10 @@ struct SessionState {
   uint32_t maxLayerCount = 0;
   // Reused per-frame layer vector (reserved, no heap alloc on hot path).
   std::vector<const XrCompositionLayerBaseHeader*> outLayers;
+  // Per-frame quad vector (reserved, no heap alloc on hot path).
+  std::vector<XrCompositionLayerQuad> ourQuads;
+  // Cached swapchain format list (enumerated once at session create).
+  std::vector<int64_t> supportedFormats;
 
   // Frame cache: skips redundant work when no new producer content arrived.
   uint64_t lastConsumedFrameNumber = 0;
@@ -475,14 +475,9 @@ static bool ensureSlotResources(const IrdashiesShmHeader& f, uint32_t slotIdx) {
 // ---------------------------------------------------------------------------
 // Swapchain management (recreated when target size/format changes)
 // ---------------------------------------------------------------------------
-static int64_t pickFormat(DXGI_FORMAT srcFormat = DXGI_FORMAT_UNKNOWN) {
-  uint32_t count = 0;
-  g_next_xrEnumerateSwapchainFormats(g.session, 0, &count, nullptr);
-  std::vector<int64_t> formats(count);
-  g_next_xrEnumerateSwapchainFormats(g.session, count, &count, formats.data());
-  // 1) exact match with the producer's source format (no swizzle needed)
+static int64_t pickFormat(DXGI_FORMAT srcFormat,
+                          const std::vector<int64_t>& formats) {
   for (int64_t f : formats) if (f == (int64_t)srcFormat) return f;
-  // 2) the other common UNORM 8-bit format (swizzle in shader if mismatch)
   for (int64_t want : {(int64_t)DXGI_FORMAT_B8G8R8A8_UNORM,
                        (int64_t)DXGI_FORMAT_R8G8B8A8_UNORM}) {
     for (int64_t f : formats) {
@@ -565,6 +560,17 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
 
   if (haveFrame) {
     slotIdx = frame.latestIndex;
+
+    // Invalidate the cache FIRST if the producer identity changed (feeder PID
+    // or this slot's texture handle differs from what we opened against).
+    if (g.lastConsumedSlot &&
+        (g.feederPid != frame.feederProcessId ||
+         g.lastConsumedSlot->texHandleVal !=
+             frame.frames[slotIdx].textureHandle)) {
+      g.lastConsumedSlot = nullptr;
+      g.lastConsumedFrameNumber = 0;
+    }
+
     const auto& fslot = frame.frames[slotIdx];
     newContent = (fslot.frameNumber != g.lastConsumedFrameNumber) ||
                  (g.lastConsumedSlot == nullptr);
@@ -583,13 +589,6 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
                    g.lastConsumedSlot->srv != nullptr);
     }
   } else {
-    g.lastConsumedSlot = nullptr;
-  }
-
-  // Invalidate the cache if the producer identity changed (feeder PID or
-  // this slot's texture handle differs from what we opened against).
-  if (g.lastConsumedSlot && (g.feederPid != frame.feederProcessId ||
-      g.lastConsumedSlot->texHandleVal != frame.frames[slotIdx].textureHandle)) {
     g.lastConsumedSlot = nullptr;
   }
 
@@ -617,22 +616,23 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     }
   }
 
-  const auto& slot = haveFrame ? frame.frames[slotIdx] : frame.frames[0];
-  const uint32_t w = haveFrame ? slot.width : kFallbackSize;
-  const uint32_t h = haveFrame ? slot.height : kFallbackSize;
+  const auto& slot = frame.frames[slotIdx];
+  const uint32_t w = slot.width;
+  const uint32_t h = slot.height;
 
   int64_t fmt = g.swapchainFormat;
+  bool needsSwizzle = false;
   if (haveFrame) {
     const DXGI_FORMAT srcFmt = (DXGI_FORMAT)slot.format;
-    fmt = pickFormat(srcFmt);
+    fmt = pickFormat(srcFmt, g.supportedFormats);
     const DXGI_FORMAT dstFmt = (DXGI_FORMAT)fmt;
-    g.needsSwizzle = (srcFmt != dstFmt) &&
+    needsSwizzle = (srcFmt != dstFmt) &&
                      (srcFmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
                       srcFmt == DXGI_FORMAT_R8G8B8A8_UNORM) &&
                      (dstFmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
                       dstFmt == DXGI_FORMAT_R8G8B8A8_UNORM);
   }
-  if (fmt == 0) fmt = pickFormat();
+  if (fmt == 0) fmt = pickFormat(DXGI_FORMAT_UNKNOWN, g.supportedFormats);
 
   if (!haveFrame) return g_next_xrEndFrame(session, frameEndInfo);
 
@@ -665,9 +665,14 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   dc->IASetInputLayout(nullptr);
   dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   dc->VSSetShader(g.vs, nullptr, 0);
-  dc->PSSetShader(g.needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
-  dc->PSSetShaderResources(0, 1,
-      newContent ? &g.slotViews[slotIdx].srv : &g.lastConsumedSlot->srv);
+  dc->PSSetShader(needsSwizzle && g.psSwizzle ? g.psSwizzle : g.ps, nullptr, 0);
+  {
+    ID3D11ShaderResourceView* srv =
+        (newContent && slotIdx < IRDASHIES_SHM_RING_SIZE)
+            ? g.slotViews[slotIdx].srv
+            : (g.lastConsumedSlot ? g.lastConsumedSlot->srv : nullptr);
+    dc->PSSetShaderResources(0, 1, &srv);
+  }
   dc->PSSetSamplers(0, 1, &g.sampler);
   dc->Draw(3, 0);
 
@@ -688,7 +693,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   // Build per-widget quads from the layer table. Each quad references the
   // same swapchain but with a different subImage.imageRect (the widget's
   // sub-rect in the atlas), its own pose, size, and opacity.
-  std::vector<XrCompositionLayerQuad> ourQuads;
+  g.ourQuads.clear();
   const uint32_t lc = frame.layerCount;
   if (lc > 0 && lc <= IRDASHIES_SHM_MAX_LAYERS) {
     for (uint32_t i = 0; i < lc; ++i) {
@@ -699,14 +704,16 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       q.space = g.localSpace;
       q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
       q.subImage.swapchain = g.swapchain;
-      // Clamp sourceRect to the swapchain extent so a mismatched OSR window
-      // size never samples beyond the swapchain bounds.
-      q.subImage.imageRect.offset.x = (int32_t)layer.sourceRect[0];
-      q.subImage.imageRect.offset.y = (int32_t)layer.sourceRect[1];
-      q.subImage.imageRect.extent.width =
-          (int32_t)std::min(layer.sourceRect[2], (float)w);
-      q.subImage.imageRect.extent.height =
-          (int32_t)std::min(layer.sourceRect[3], (float)h);
+      // Clamp sourceRect offset + extent to the swapchain bounds.
+      {
+        int32_t ox = std::max(0, std::min((int32_t)layer.sourceRect[0], (int32_t)w - 1));
+        int32_t oy = std::max(0, std::min((int32_t)layer.sourceRect[1], (int32_t)h - 1));
+        int32_t ew = std::max(0, std::min((int32_t)layer.sourceRect[2], (int32_t)w - ox));
+        int32_t eh = std::max(0, std::min((int32_t)layer.sourceRect[3], (int32_t)h - oy));
+        if (ew == 0 || eh == 0) continue;  // fully outside atlas, skip
+        q.subImage.imageRect.offset = {ox, oy};
+        q.subImage.imageRect.extent = {ew, eh};
+      }
       q.subImage.imageArrayIndex = 0;
       if (g.hasRecenterPose) {
         const float h = layer.posePosition[0];
@@ -728,12 +735,12 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
                               layer.poseOrientation[2], layer.poseOrientation[3]};
       }
       q.size = {layer.quadSizeMeters[0], layer.quadSizeMeters[1]};
-      ourQuads.push_back(q);
+      g.ourQuads.push_back(q);
     }
   }
 
   // Fallback: no layer table → single quad from shared pose fields.
-  if (ourQuads.empty()) {
+  if (g.ourQuads.empty()) {
   XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
   q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
   q.space = g.localSpace;
@@ -759,7 +766,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
     q.pose.position = {hp, vert, -dp};
   }
   q.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
-  ourQuads.push_back(q);
+  g.ourQuads.push_back(q);
   }
 
   g.outLayers.clear();
@@ -773,7 +780,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
       ? (g.maxLayerCount - gameCount) : 0;
 
   uint32_t appended = 0;
-  for (auto& q : ourQuads) {
+  for (auto& q : g.ourQuads) {
     if (appended >= ourBudget) break;
     g.outLayers.push_back(
         reinterpret_cast<const XrCompositionLayerBaseHeader*>(&q));
@@ -875,16 +882,6 @@ static XrResult XRAPI_CALL my_xrCreateSession(
     g.viewSpace = XR_NULL_HANDLE;
   }
 
-  // STAGE space - used for quad positioning so it moves with iRacing's recenter.
-  XrReferenceSpaceCreateInfo stageInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-  stageInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
-  stageInfo.poseInReferenceSpace.orientation = {0, 0, 0, 1};
-  if (XR_FAILED(g_next_xrCreateReferenceSpace(*session, &stageInfo,
-                                              &g.stageSpace))) {
-    layerLog("Failed to create STAGE reference space, falling back to LOCAL.");
-    g.stageSpace = XR_NULL_HANDLE;
-  }
-
   if (!createBlitPipeline()) {
     layerLog("Failed to create blit pipeline - overlay disabled.");
     return res;
@@ -902,6 +899,18 @@ static XrResult XRAPI_CALL my_xrCreateSession(
     if (g.maxLayerCount == 0) g.maxLayerCount = 1;
   }
   g.outLayers.reserve(32);
+  g.ourQuads.reserve(IRDASHIES_SHM_MAX_LAYERS);
+
+  // Enumerate swapchain formats once (they don't change during a session).
+  {
+    uint32_t fmtCount = 0;
+    g_next_xrEnumerateSwapchainFormats(g.session, 0, &fmtCount, nullptr);
+    g.supportedFormats.resize(fmtCount);
+    if (fmtCount > 0) {
+      g_next_xrEnumerateSwapchainFormats(g.session, fmtCount, &fmtCount,
+                                         g.supportedFormats.data());
+    }
+  }
 
   layerLog("Session ready - overlay active.");
   return res;
@@ -918,7 +927,6 @@ static XrResult XRAPI_CALL my_xrDestroySession(XrSession session) {
     release(g.psSwizzle);
     if (g.localSpace) g_next_xrDestroySpace(g.localSpace);
     if (g.viewSpace) g_next_xrDestroySpace(g.viewSpace);
-    if (g.stageSpace) g_next_xrDestroySpace(g.stageSpace);
     release(g.deferred);
     release(g.context4);
     release(g.context);

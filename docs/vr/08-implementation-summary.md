@@ -100,8 +100,14 @@ works correctly regardless.
   pose/size per widget.
 - **In-headset repositioning** — OpenXR action sets for motion-controller or
   gaze-based quad dragging (the biggest UX improvement).
-- **Opacity override** — the `opacity` field is in the layer table but not
-  wired to any settings UI yet.
+- **Opacity** — the `opacity` field is in the SHM contract and published by the
+  producer, but the consumer does not yet read it (the blit shader copies texels
+  as-is, and OpenXR has no quad-level opacity control). Implementing it requires:
+  a per-layer blit with a scissor rect set to the layer's `sourceRect`, passing
+  `opacity` as a shader constant, multiplying `rgb * opacity` and `a * opacity`
+  in the pixel shader (Chromium OSR textures are premultiplied, so both must be
+  scaled). Keep `BLEND_TEXTURE_SOURCE_ALPHA_BIT` since we premultiply in-shader.
+  Deferred to the atlas-page follow-up where the opacity UI lands with it.
 - **Test harness** — a standalone OpenXR host app (like Khronos `hello_xr`)
   configured to load the layer would allow validating the full pipeline
   without launching iRacing each iteration.
