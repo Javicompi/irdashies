@@ -824,12 +824,20 @@ static XrResult XRAPI_CALL my_xrCreateSession(
     return res;
   }
 
+  // Multi-thread protection: harmless if we never use another thread, but
+  // required if a future background decode/upload runs on a worker thread.
+  ID3D11Multithread* mt = nullptr;
+  if (SUCCEEDED(g.device->QueryInterface(IID_PPV_ARGS(&mt)))) {
+    mt->SetMultithreadProtected(TRUE);
+    mt->Release();
+  }
+
   // Deferred context so our blit never disturbs the game's immediate context.
   g.device->CreateDeferredContext(0, &g.deferred);
   if (!g.deferred) {
-    layerLog(
-        "CreateDeferredContext failed - using immediate context (may disturb "
-        "game render state).");
+    layerLog("CreateDeferredContext failed - overlay disabled.");
+    g = SessionState{};
+    return res;
   }
 
   // Record the game's GPU LUID so we can detect a producer/game GPU mismatch.
