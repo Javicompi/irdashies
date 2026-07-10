@@ -22,6 +22,7 @@
 // header <openxr/loader_interfaces.h>; it was renamed in 1.0.33.
 #include <openxr/openxr_loader_negotiation.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -640,12 +641,40 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   XrSwapchainImageReleaseInfo rel{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
   g_next_xrReleaseSwapchainImage(g.swapchain, &rel);
 
-  // Build per-widget quads from the layer table or fall back to shared pose.
+  // Build per-widget quads from the layer table. Each quad references the
+  // same swapchain but with a different subImage.imageRect (the widget's
+  // sub-rect in the atlas), its own pose, size, and opacity.
   std::vector<XrCompositionLayerQuad> ourQuads;
-  // TODO(#04): use frame.layers[] when frontend layout is implemented.
-  // For now, always use the shared-pose fallback (proven stable path).
+  const uint32_t lc = frame.layerCount;
+  if (lc > 0 && lc <= IRDASHIES_SHM_MAX_LAYERS) {
+    for (uint32_t i = 0; i < lc; ++i) {
+      const auto& layer = frame.layers[i];
+      if (!layer.visible) continue;
+      XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
+      q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+      q.space = g.localSpace;
+      q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+      q.subImage.swapchain = g.swapchain;
+      // Clamp sourceRect to the swapchain extent so a mismatched OSR window
+      // size never samples beyond the swapchain bounds.
+      q.subImage.imageRect.offset.x = (int32_t)layer.sourceRect[0];
+      q.subImage.imageRect.offset.y = (int32_t)layer.sourceRect[1];
+      q.subImage.imageRect.extent.width =
+          (int32_t)std::min(layer.sourceRect[2], (float)w);
+      q.subImage.imageRect.extent.height =
+          (int32_t)std::min(layer.sourceRect[3], (float)h);
+      q.subImage.imageArrayIndex = 0;
+      q.pose.position = {layer.posePosition[0], layer.posePosition[1],
+                         layer.posePosition[2]};
+      q.pose.orientation = {layer.poseOrientation[0], layer.poseOrientation[1],
+                            layer.poseOrientation[2], layer.poseOrientation[3]};
+      q.size = {layer.quadSizeMeters[0], layer.quadSizeMeters[1]};
+      ourQuads.push_back(q);
+    }
+  }
 
-  // Single quad from shared pose fields.
+  // Fallback: no layer table → single quad from shared pose fields.
+  if (ourQuads.empty()) {
   XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
   q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
   q.space = g.localSpace;
@@ -672,6 +701,7 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   }
   q.size = {frame.quadSizeMeters[0], frame.quadSizeMeters[1]};
   ourQuads.push_back(q);
+  }
 
   std::vector<const XrCompositionLayerBaseHeader*> layers(
       frameEndInfo->layers, frameEndInfo->layers + frameEndInfo->layerCount);
