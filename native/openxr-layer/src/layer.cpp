@@ -97,6 +97,10 @@ static PFN_xrReleaseSwapchainImage g_next_xrReleaseSwapchainImage = nullptr;
 static PFN_xrCreateReferenceSpace g_next_xrCreateReferenceSpace = nullptr;
 static PFN_xrDestroySpace g_next_xrDestroySpace = nullptr;
 static PFN_xrLocateSpace g_next_xrLocateSpace = nullptr;
+static PFN_xrGetSystemProperties g_next_xrGetSystemProperties = nullptr;
+
+// Captured at API layer instance creation; needed to query system properties.
+static XrInstance g_instance = XR_NULL_HANDLE;
 
 // ---------------------------------------------------------------------------
 // Shared-memory reader (producer -> consumer transport)
@@ -194,6 +198,11 @@ struct SessionState {
   uint64_t fenceHandleVal = 0;
   ID3D11Fence* fence = nullptr;
   SlotView slotViews[IRDASHIES_SHM_RING_SIZE];
+
+  // Layer budget (queried from runtime once per session).
+  uint32_t maxLayerCount = 0;
+  // Reused per-frame layer vector (reserved, no heap alloc on hot path).
+  std::vector<const XrCompositionLayerBaseHeader*> outLayers;
 };
 static SessionState g;
 
@@ -718,15 +727,27 @@ static XrResult XRAPI_CALL my_xrEndFrame(XrSession session,
   ourQuads.push_back(q);
   }
 
-  std::vector<const XrCompositionLayerBaseHeader*> layers(
-      frameEndInfo->layers, frameEndInfo->layers + frameEndInfo->layerCount);
+  g.outLayers.clear();
+  const auto* gameLayers = frameEndInfo->layers;
+  const uint32_t gameCount = frameEndInfo->layerCount;
+  for (uint32_t i = 0; i < gameCount; ++i)
+    g.outLayers.push_back(gameLayers[i]);
+
+  // Budget: game layers always win; ours are dropped first when over limit.
+  const uint32_t ourBudget = (g.maxLayerCount > gameCount)
+      ? (g.maxLayerCount - gameCount) : 0;
+
+  uint32_t appended = 0;
   for (auto& q : ourQuads) {
-    layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&q));
+    if (appended >= ourBudget) break;
+    g.outLayers.push_back(
+        reinterpret_cast<const XrCompositionLayerBaseHeader*>(&q));
+    ++appended;
   }
 
   XrFrameEndInfo patched = *frameEndInfo;
-  patched.layerCount = (uint32_t)layers.size();
-  patched.layers = layers.data();
+  patched.layerCount = (uint32_t)g.outLayers.size();
+  patched.layers = g.outLayers.data();
   return g_next_xrEndFrame(session, &patched);
 }
 
@@ -826,6 +847,19 @@ static XrResult XRAPI_CALL my_xrCreateSession(
     return res;
   }
 
+  // Query the runtime's max layer count so we never exceed it.
+  {
+    XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
+    if (g_instance && g_next_xrGetSystemProperties &&
+        XR_SUCCEEDED(g_next_xrGetSystemProperties(
+            g_instance, createInfo->systemId, &sp))) {
+      g.maxLayerCount = sp.graphicsProperties.maxLayerCount;
+      layerLog("Runtime maxLayerCount = %u", g.maxLayerCount);
+    }
+    if (g.maxLayerCount == 0) g.maxLayerCount = 1;
+  }
+  g.outLayers.reserve(32);
+
   layerLog("Session ready - overlay active.");
   return res;
 }
@@ -901,6 +935,8 @@ static XrResult XRAPI_CALL my_xrCreateApiLayerInstance(
       info, &nextLayerInfo, instance);
   if (XR_FAILED(res)) return res;
 
+  g_instance = *instance;
+
 #define LOAD(fn)                                            \
   g_nextGetInstanceProcAddr(*instance, #fn,                 \
                             reinterpret_cast<PFN_xrVoidFunction*>(&g_next_##fn))
@@ -917,6 +953,7 @@ static XrResult XRAPI_CALL my_xrCreateApiLayerInstance(
   LOAD(xrCreateReferenceSpace);
   LOAD(xrDestroySpace);
   LOAD(xrLocateSpace);
+  LOAD(xrGetSystemProperties);
 #undef LOAD
 
   layerLog("API layer instance created.");
