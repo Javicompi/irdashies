@@ -52,16 +52,13 @@ export const VrAtlasContainer = memo(() => {
     [currentDashboard?.widgets]
   );
 
-  const atlasWidth = window.innerWidth;
-  const padding = 4;
+const atlasWidth = window.innerWidth;
+const MARGIN_X = 200;
 
-  // Shelf-packing: left-to-right, wrap to next row.
-  const slots = useMemo<AtlasSlot[]>(() => {
+// Shelf-packing with left margin so widgets aren't pinned to the edge.
+const slots = useMemo<AtlasSlot[]>(() => {
     const result: AtlasSlot[] = [];
     const padding = 4;
-    const atlasWidth = window.innerWidth;
-    // Start with a left margin so widgets aren't pinned to the left edge.
-    const MARGIN_X = 200;
     let fallbackX = MARGIN_X;
     let fallbackY = MARGIN_X;
     let rowH = 0;
@@ -90,7 +87,6 @@ export const VrAtlasContainer = memo(() => {
       result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
       fallbackX += ww + padding;
       rowH = Math.max(rowH, wh);
-    }
     }
     return result;
   }, [vrWidgets, livePos, editMode, selectedWidgetId]);
