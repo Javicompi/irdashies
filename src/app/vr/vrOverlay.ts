@@ -59,9 +59,8 @@ function getWidgetAtlasPos(widgetId: string): [number, number] {
 }
 
 function publishVrLayers(): void {
-  if (!osrWindow) { logger.warn('[VR] publishVrLayers: no osrWindow'); return; }
+  if (!osrWindow) return;
   const pose = currentVrPose ?? DEFAULT_POSE;
-  logger.info('[VR] publishVrLayers: atlas=%dx%d pos=[%s]', atlasTexW, atlasTexH, pose.position?.join(','));
 
   // Always publish a single full-atlas layer. In edit mode, the VR atlas page
   // renders green borders + instructions directly into the atlas texture, so
@@ -160,7 +159,7 @@ function toggleVrEditMode(): void {
     if (selectedWidgetId) {
       const [x, y] = getWidgetAtlasPos(selectedWidgetId);
       liveEditX = x; liveEditY = y;
-      liveEditZ = -(currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2]);
+      liveEditZ = currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2];
     }
     registerEditKeys();
     logger.info('[VR] edit mode ON');
@@ -199,17 +198,24 @@ function moveSelected(dx: number, dy: number, dz: number): void {
 
   if (dz !== 0) {
     liveEditZ = Math.max(-4, Math.min(liveEditZ + dz, -0.5));
-    const settings: VrOverlaySettings = {
-      ...DEFAULT_VR_OVERLAY_SETTINGS,
-      width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
-      distance: -liveEditZ,
-      horizontal: currentVrPose?.position?.[0] ?? 0,
-      vertical: currentVrPose?.position?.[1] ?? 0,
-    };
-    applyVrOverlaySettings(settings);
+    // Debounce: only update the shared pose every 100ms to avoid flooding
+    // setPose/publishVrLayers on every key repeat.
+    if (!moveSelected._zTimer) {
+      moveSelected._zTimer = setTimeout(() => {
+        moveSelected._zTimer = undefined;
+        applyVrOverlaySettings({
+          ...DEFAULT_VR_OVERLAY_SETTINGS,
+          width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
+          distance: -liveEditZ,
+          horizontal: currentVrPose?.position?.[0] ?? 0,
+          vertical: currentVrPose?.position?.[1] ?? 0,
+        });
+      }, 100);
+    }
     notifyRenderer();
   }
 }
+(moveSelected as any)._zTimer = undefined as NodeJS.Timeout | undefined;
 
 export function updateVrDashboard(dashboard: DashboardLayout): void {
   currentDashboard = dashboard;
@@ -286,6 +292,8 @@ export function startVrOverlay(
   const zoomFactor = 1;
 
   quadAspect = texH / texW;
+  atlasTexW = texW;
+  atlasTexH = texH;
   const pose = poseFromSettings(settings);
   currentVrPose = pose;
 
