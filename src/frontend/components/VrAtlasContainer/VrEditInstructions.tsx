@@ -1,7 +1,8 @@
 import { memo, useState, useEffect } from 'react';
 
 export const VrEditInstructions = memo(() => {
-  const [pos, setPos] = useState({ x: 0, y: 0, z: -1.5 });
+  const init = (window as any).__vrEdit as { x?: number; y?: number; z?: number } | undefined;
+  const [pos, setPos] = useState({ x: init?.x ?? 0, y: init?.y ?? 0, z: init?.z ?? -1.5 });
 
   useEffect(() => {
     const handler = (e: Event) => {

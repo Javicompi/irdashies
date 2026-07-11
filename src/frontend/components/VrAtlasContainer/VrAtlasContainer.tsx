@@ -23,7 +23,8 @@ export const VrAtlasContainer = memo(() => {
 
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
-  const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const init = (window as any).__vrEdit as { x?: number; y?: number } | undefined;
+  const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: init?.x ?? 0, y: init?.y ?? 0 });
   const livePosCache = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   useEffect(() => {
