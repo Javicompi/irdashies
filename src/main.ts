@@ -36,6 +36,7 @@ import {
   stopVrOverlay,
   applyVrOverlaySettings,
   updateVrDashboard,
+  registerVrEditKeys,
 } from './app/vr/vrOverlay';
 import { onDashboardUpdated } from './app/storage/dashboardEvents';
 
@@ -98,6 +99,9 @@ app.on('ready', async () => {
 
   keybindingManager = new KeybindingManager(overlayManager);
   keybindingManager.registerAll();
+  // Register F9 for VR edit mode AFTER KeybindingManager so it isn't wiped
+  // if registerAll calls unregisterAll internally.
+  if (isVrOverlayEnabled()) registerVrEditKeys();
   // Start the WebHID host window that reads game controllers for gamepad bindings.
   keybindingManager.startGamepad();
 

@@ -107,7 +107,10 @@ function registerEditKeys(): void {
   if (editKeysRegistered) return;
   editKeysRegistered = true;
   const reg = (accel: string, handler: () => void) => {
-    if (!globalShortcut.isRegistered(accel)) globalShortcut.register(accel, handler);
+    // Unregister first so our handler takes precedence over any existing
+    // KeybindingManager registration during edit mode.
+    if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
+    globalShortcut.register(accel, handler);
   };
   reg('Space', () => cycleSelectedWidget());
   reg('Left',  () => moveSelected(-0.01, 0, 0));
@@ -193,6 +196,13 @@ function moveSelected(dx: number, dy: number, dz: number): void {
 
 export function updateVrDashboard(dashboard: DashboardLayout): void {
   currentDashboard = dashboard;
+}
+
+/** Register F9 for VR edit mode. Called from main.ts after KeybindingManager. */
+export function registerVrEditKeys(): void {
+  if (!globalShortcut.isRegistered('F9')) {
+    globalShortcut.register('F9', toggleVrEditMode);
+  }
 }
 
 // ----------------------------------------------------------------
@@ -294,9 +304,6 @@ export function startVrOverlay(
   // Receive dashboard/telemetry/running broadcasts like a real overlay window
   // (it is not display/bounds managed, so it renders all enabled widgets).
   overlayManager.addExternalWindow(osrWindow);
-
-  // Register F9 for VR edit mode (only while VR is active).
-  if (!globalShortcut.isRegistered('F9')) globalShortcut.register('F9', toggleVrEditMode);
 
   const wc = osrWindow.webContents;
   // Apply the supersample zoom on load: zoom shrinks the CSS viewport back to
