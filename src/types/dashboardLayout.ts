@@ -23,6 +23,12 @@ export interface DashboardWidget {
   alwaysEnabled?: boolean;
   /** Show this widget in the VR overlay (defaults to true for all widgets). */
   vrEnabled?: boolean;
+  /**
+   * Per-widget 3D position in the VR overlay (metres, LOCAL space).
+   * [x, y, z] where z is negative (in front of user). When absent, the widget
+   * uses the global VR settings position (centred by default).
+   */
+  vrPosition?: [number, number, number];
   /** The layout of the window for the widget on the dashboard. */
   layout: WidgetLayout;
   /** Configuration for the widget. */

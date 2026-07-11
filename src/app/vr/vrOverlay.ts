@@ -1,11 +1,13 @@
-import { BrowserWindow, ipcMain, screen } from 'electron';
+import { BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'path';
 import logger from '../logger';
 import type { OverlayManager } from '../overlayManager';
+import { saveDashboard, getCurrentProfileId } from '../storage/dashboards';
 import {
   DEFAULT_VR_OVERLAY_SETTINGS,
   type VrOverlaySettings,
 } from '@irdashies/types';
+import type { DashboardLayout } from '@irdashies/types';
 import { VrOverlayNative, type VrPose } from './native';
 
 // Injected by the forge vite plugin (same globals overlayManager uses).
@@ -31,6 +33,13 @@ interface AtlasLayer {
 }
 let atlasLayout: AtlasLayer[] = [];
 let currentVrPose: VrPose | undefined;
+let currentDashboard: DashboardLayout | undefined;
+
+// VR edit-mode state (session-only, persisted to dashboard on exit).
+let vrEditMode = false;
+let selectedWidgetIndex = 0;
+let selectedWidgetId: string | null = null;
+let liveEditPosition: [number, number, number] = [0, 0, -1.5];
 
 const DEFAULT_POSE: Required<VrPose> = {
   position: [0, 0, -1.5],
@@ -38,11 +47,47 @@ const DEFAULT_POSE: Required<VrPose> = {
   size: [0.5, 0.5],
 };
 
+function getWidgetVrPosition(
+  widgetId: string,
+  globalPose: VrPose
+): [number, number, number] {
+  if (vrEditMode && widgetId === selectedWidgetId) return liveEditPosition;
+  const widget = currentDashboard?.widgets.find((w) => w.id === widgetId);
+  const def = globalPose.position ?? DEFAULT_POSE.position;
+  const pos = widget?.vrPosition;
+  return pos ? [pos[0], pos[1], pos[2]] : [def[0], def[1], def[2]];
+}
+
 function publishVrLayers(): void {
   if (!osrWindow) return;
   const pose = currentVrPose ?? DEFAULT_POSE;
-  // Publish a single full-atlas layer. Per-widget quads with individual poses
-  // come when per-widget VR placement settings land (future work).
+
+  if (vrEditMode) {
+    // Edit mode: one quad per VR widget, each with its own pose.
+    const globalPos = pose.position ?? DEFAULT_POSE.position;
+    const layers = atlasLayout.map((slot) => ({
+      position: getWidgetVrPosition(slot.widgetId, pose),
+      orientation: pose.orientation ?? DEFAULT_POSE.orientation,
+      size: pose.size ?? DEFAULT_POSE.size,
+      sourceRect: slot.sourceRect,
+      opacity: 1,
+      visible: 1,
+    }));
+    // Instructions overlay as a fixed quad at the bottom of the atlas.
+    const instrH = 200;
+    layers.push({
+      position: [0, -0.15, -1.2],
+      orientation: [0, 0, 0, 1],
+      size: pose.size ?? DEFAULT_POSE.size,
+      sourceRect: [0, atlasTexH - instrH, atlasTexW, instrH],
+      opacity: 1,
+      visible: 1,
+    });
+    VrOverlayNative.setLayers(layers);
+    return;
+  }
+
+  // Normal mode: single full-atlas quad.
   VrOverlayNative.setLayers([
     {
       position: pose.position ?? DEFAULT_POSE.position,
@@ -55,8 +100,103 @@ function publishVrLayers(): void {
   ]);
 }
 
-// Listen for atlas layout reports from the VR atlas renderer page. Stored for
-// the future per-widget quad path; the MVP ignores it (full-atlas layer).
+// --------------- VR Edit Mode (per-widget positioning) ---------------
+
+let editKeysRegistered = false;
+
+function registerEditKeys(): void {
+  if (editKeysRegistered) return;
+  editKeysRegistered = true;
+  const reg = (accel: string, handler: () => void) => {
+    if (!globalShortcut.isRegistered(accel)) globalShortcut.register(accel, handler);
+  };
+  reg('Space', () => cycleSelectedWidget());
+  reg('Left',  () => moveSelected(-0.01, 0, 0));
+  reg('Right', () => moveSelected( 0.01, 0, 0));
+  reg('Up',    () => moveSelected(0,  0.01, 0));
+  reg('Down',  () => moveSelected(0, -0.01, 0));
+  reg('Q',     () => moveSelected(0, 0, -0.01));
+  reg('E',     () => moveSelected(0, 0,  0.01));
+}
+
+function unregisterEditKeys(): void {
+  if (!editKeysRegistered) return;
+  editKeysRegistered = false;
+  for (const accel of ['Space', 'Left', 'Right', 'Up', 'Down', 'Q', 'E']) {
+    if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
+  }
+}
+
+function commitLivePositionToDashboard(): void {
+  if (!currentDashboard || !selectedWidgetId) return;
+  currentDashboard = {
+    ...currentDashboard,
+    widgets: currentDashboard.widgets.map((w) =>
+      w.id === selectedWidgetId ? { ...w, vrPosition: liveEditPosition } : w
+    ),
+  };
+}
+
+function saveVrPositionsToDashboard(): void {
+  commitLivePositionToDashboard();
+  if (!currentDashboard) return;
+  saveDashboard(getCurrentProfileId(), currentDashboard);
+  // Note: saveDashboard emits onDashboardUpdated, which calls
+  // applyVrOverlaySettings → publishVrLayers again (idempotent).
+}
+
+function toggleVrEditMode(): void {
+  if (!osrWindow || osrWindow.isDestroyed()) return;
+  vrEditMode = !vrEditMode;
+
+  if (vrEditMode) {
+    selectedWidgetIndex = 0;
+    selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
+    if (selectedWidgetId) {
+      liveEditPosition = getWidgetVrPosition(selectedWidgetId, currentVrPose ?? DEFAULT_POSE);
+    }
+    registerEditKeys();
+    logger.info('[VR] edit mode ON');
+  } else {
+    unregisterEditKeys();
+    saveVrPositionsToDashboard();
+    selectedWidgetId = null;
+    logger.info('[VR] edit mode OFF');
+  }
+
+  osrWindow.webContents.send('vr-edit-mode', vrEditMode, selectedWidgetId, liveEditPosition);
+  publishVrLayers();
+}
+
+function cycleSelectedWidget(): void {
+  if (!vrEditMode || atlasLayout.length === 0) return;
+  commitLivePositionToDashboard();
+  selectedWidgetIndex = (selectedWidgetIndex + 1) % atlasLayout.length;
+  selectedWidgetId = atlasLayout[selectedWidgetIndex].widgetId;
+  liveEditPosition = getWidgetVrPosition(selectedWidgetId, currentVrPose ?? DEFAULT_POSE);
+  if (osrWindow && !osrWindow.isDestroyed()) {
+    osrWindow.webContents.send('vr-edit-select', selectedWidgetId, liveEditPosition);
+  }
+}
+
+function moveSelected(dx: number, dy: number, dz: number): void {
+  if (!vrEditMode || !selectedWidgetId) return;
+  liveEditPosition = [
+    +(liveEditPosition[0] + dx).toFixed(3),
+    +(liveEditPosition[1] + dy).toFixed(3),
+    +(liveEditPosition[2] + dz).toFixed(3),
+  ];
+  if (osrWindow && !osrWindow.isDestroyed()) {
+    osrWindow.webContents.send('vr-edit-move', liveEditPosition);
+  }
+  publishVrLayers();
+}
+
+export function updateVrDashboard(dashboard: DashboardLayout): void {
+  currentDashboard = dashboard;
+}
+
+// ----------------------------------------------------------------
 ipcMain.on('vr-atlas-layout', (_event, layers: AtlasLayer[]) => {
   atlasLayout = layers;
   publishVrLayers();
@@ -155,6 +295,9 @@ export function startVrOverlay(
   // Receive dashboard/telemetry/running broadcasts like a real overlay window
   // (it is not display/bounds managed, so it renders all enabled widgets).
   overlayManager.addExternalWindow(osrWindow);
+
+  // Register F9 for VR edit mode (only while VR is active).
+  if (!globalShortcut.isRegistered('F9')) globalShortcut.register('F9', toggleVrEditMode);
 
   const wc = osrWindow.webContents;
   // Apply the supersample zoom on load: zoom shrinks the CSS viewport back to
@@ -261,4 +404,7 @@ export function stopVrOverlay(): void {
   }
   overlayManagerRef?.restoreDesktopOverlays();
   overlayManagerRef = null;
+  unregisterEditKeys();
+  if (globalShortcut.isRegistered('F9')) globalShortcut.unregister('F9');
+  vrEditMode = false;
 }

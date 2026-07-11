@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useDashboard, useRunningState } from '@irdashies/context';
 import { getWidget } from '../../WidgetIndex';
 import { WidgetContainer } from '../WidgetContainer';
 import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
+import { VrEditInstructions } from './VrEditInstructions';
 
 const noop = () => {
   // VR atlas widgets are not draggable; no-op for the required prop.
@@ -19,6 +20,25 @@ interface AtlasSlot {
 export const VrAtlasContainer = memo(() => {
   const { currentDashboard } = useDashboard();
   const { running } = useRunningState();
+
+  const [editMode, setEditMode] = useState(false);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
+  const [, setLivePosition] = useState<[number, number, number]>([0, 0, -1.5]);
+
+  useEffect(() => {
+    if (!window.vrEditBridge) return;
+    const unmode = window.vrEditBridge.onEditMode((active, id, pos) => {
+      setEditMode(active);
+      setSelectedWidgetId(id);
+      setLivePosition(pos);
+    });
+    const unsel = window.vrEditBridge.onSelect((id, pos) => {
+      setSelectedWidgetId(id);
+      setLivePosition(pos);
+    });
+    const unmove = window.vrEditBridge.onMove((pos) => setLivePosition(pos));
+    return () => { unmode(); unsel(); unmove(); };
+  }, []);
 
   // All enabled widgets; vrEnabled defaults to true (matches pre-P2 behaviour).
   // Sort by desktop layout position (top-left to bottom-right) so the visual
@@ -83,6 +103,7 @@ export const VrAtlasContainer = memo(() => {
         if (!widget) return null;
         const WidgetComponent = getWidget(widget.type || widget.id);
         if (!WidgetComponent) return null;
+        const isSelected = editMode && selectedWidgetId === widget.id;
         return (
           <WidgetContainer
             key={widget.id}
@@ -99,12 +120,15 @@ export const VrAtlasContainer = memo(() => {
                 label={`vr-widget:${widget.type || widget.id}`}
                 resetAfterMs={2000}
               >
-                <WidgetComponent {...widget.config} />
+                <div className={isSelected ? 'outline outline-2 outline-green-500' : ''}>
+                  <WidgetComponent {...widget.config} />
+                </div>
               </ErrorBoundary>
             ) : null}
           </WidgetContainer>
         );
       })}
+      {editMode && <VrEditInstructions />}
     </div>
   );
 });

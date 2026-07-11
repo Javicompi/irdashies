@@ -63,4 +63,27 @@ export function exposeInMainWorld() {
       layers: { widgetId: string; sourceRect: [number, number, number, number] }[]
     ) => ipcRenderer.send('vr-atlas-layout', layers),
   });
+
+  contextBridge.exposeInMainWorld('vrEditBridge', {
+    onEditMode: (
+      cb: (active: boolean, selectedId: string | null, position: [number, number, number]) => void
+    ) => {
+      const listener = (_: Electron.IpcRendererEvent, active: boolean, selectedId: string | null, position: [number, number, number]) =>
+        cb(active, selectedId, position);
+      ipcRenderer.on('vr-edit-mode', listener);
+      return () => ipcRenderer.removeListener('vr-edit-mode', listener);
+    },
+    onSelect: (cb: (widgetId: string, position: [number, number, number]) => void) => {
+      const listener = (_: Electron.IpcRendererEvent, widgetId: string, position: [number, number, number]) =>
+        cb(widgetId, position);
+      ipcRenderer.on('vr-edit-select', listener);
+      return () => ipcRenderer.removeListener('vr-edit-select', listener);
+    },
+    onMove: (cb: (position: [number, number, number]) => void) => {
+      const listener = (_: Electron.IpcRendererEvent, position: [number, number, number]) =>
+        cb(position);
+      ipcRenderer.on('vr-edit-move', listener);
+      return () => ipcRenderer.removeListener('vr-edit-move', listener);
+    },
+  });
 }

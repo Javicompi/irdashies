@@ -35,6 +35,7 @@ import {
   startVrOverlay,
   stopVrOverlay,
   applyVrOverlaySettings,
+  updateVrDashboard,
 } from './app/vr/vrOverlay';
 import { onDashboardUpdated } from './app/storage/dashboardEvents';
 
@@ -88,8 +89,10 @@ app.on('ready', async () => {
   // Experimental native VR overlay (opt-in via IRDASHIES_VR=1).
   if (isVrOverlayEnabled()) {
     startVrOverlay(overlayManager, dashboard?.generalSettings?.vr);
+    updateVrDashboard(dashboard);
     onDashboardUpdated((updated) => {
       applyVrOverlaySettings(updated.generalSettings?.vr);
+      updateVrDashboard(updated);
     });
   }
 
