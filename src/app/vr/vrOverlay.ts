@@ -126,6 +126,14 @@ function saveVrPositionsToDashboard(): void {
   // applyVrOverlaySettings → publishVrLayers again (idempotent).
 }
 
+function notifyRenderer() {
+  if (!osrWindow || osrWindow.isDestroyed()) return;
+  osrWindow.webContents.executeJavaScript(
+    `window.__vrEdit={active:${vrEditMode},id:'${selectedWidgetId ?? ''}',pos:[${liveEditPosition.join(',')}]};` +
+    `window.dispatchEvent(new CustomEvent('vr-edit-state',{detail:window.__vrEdit}));`
+  ).catch(() => {});
+}
+
 function toggleVrEditMode(): void {
   logger.info('[VR] F9 pressed (osrWindow=%s)', osrWindow ? 'exists' : 'null');
   if (!osrWindow || osrWindow.isDestroyed()) return;
@@ -146,7 +154,7 @@ function toggleVrEditMode(): void {
     logger.info('[VR] edit mode OFF');
   }
 
-  osrWindow.webContents.send('vr-edit-mode', vrEditMode, selectedWidgetId ?? '', liveEditPosition);
+  notifyRenderer();
   publishVrLayers();
 }
 
@@ -156,9 +164,7 @@ function cycleSelectedWidget(): void {
   selectedWidgetIndex = (selectedWidgetIndex + 1) % atlasLayout.length;
   selectedWidgetId = atlasLayout[selectedWidgetIndex].widgetId;
   liveEditPosition = getWidgetVrPosition(selectedWidgetId, currentVrPose ?? DEFAULT_POSE);
-  if (osrWindow && !osrWindow.isDestroyed()) {
-    osrWindow.webContents.send('vr-edit-select', selectedWidgetId, liveEditPosition);
-  }
+  notifyRenderer();
 }
 
 function moveSelected(dx: number, dy: number, dz: number): void {
@@ -168,9 +174,7 @@ function moveSelected(dx: number, dy: number, dz: number): void {
     +(liveEditPosition[1] + dy).toFixed(3),
     +(liveEditPosition[2] + dz).toFixed(3),
   ];
-  if (osrWindow && !osrWindow.isDestroyed()) {
-    osrWindow.webContents.send('vr-edit-move', liveEditPosition);
-  }
+  notifyRenderer();
   publishVrLayers();
 }
 

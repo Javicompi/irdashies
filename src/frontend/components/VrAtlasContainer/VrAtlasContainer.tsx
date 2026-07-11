@@ -26,20 +26,14 @@ export const VrAtlasContainer = memo(() => {
   const [, setLivePosition] = useState<[number, number, number]>([0, 0, -1.5]);
 
   useEffect(() => {
-    if (!window.vrEditBridge) return;
-    const unmode = window.vrEditBridge.onEditMode((active, id, pos) => {
-      setEditMode(active);
-      setSelectedWidgetId(id || null);
-      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
-    });
-    const unsel = window.vrEditBridge.onSelect((id, pos) => {
-      setSelectedWidgetId(id || null);
-      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
-    });
-    const unmove = window.vrEditBridge.onMove((pos) => {
-      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
-    });
-    return () => { unmode(); unsel(); unmove(); };
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { active: boolean; id: string; pos: number[] };
+      setEditMode(detail.active);
+      setSelectedWidgetId(detail.id || null);
+      setLivePosition([detail.pos[0] ?? 0, detail.pos[1] ?? 0, detail.pos[2] ?? -1.5]);
+    };
+    window.addEventListener('vr-edit-state', handler);
+    return () => window.removeEventListener('vr-edit-state', handler);
   }, []);
 
   // All enabled widgets; vrEnabled defaults to true (matches pre-P2 behaviour).

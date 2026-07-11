@@ -4,11 +4,12 @@ export const VrEditInstructions = memo(() => {
   const [position, setPosition] = useState<[number, number, number]>([0, 0, -1.5]);
 
   useEffect(() => {
-    if (!window.vrEditBridge) return;
-    const unmove = window.vrEditBridge.onMove((pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
-    const unsel = window.vrEditBridge.onSelect((_, pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
-    const unmode = window.vrEditBridge.onEditMode((_, __, pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
-    return () => { unmove(); unsel(); unmode(); };
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { pos: number[] };
+      setPosition([detail.pos[0] ?? 0, detail.pos[1] ?? 0, detail.pos[2] ?? -1.5]);
+    };
+    window.addEventListener('vr-edit-state', handler);
+    return () => window.removeEventListener('vr-edit-state', handler);
   }, []);
 
   const fmt = (n: number) => n.toFixed(2);
