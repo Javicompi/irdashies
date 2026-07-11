@@ -23,12 +23,14 @@ export const VrAtlasContainer = memo(() => {
 
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
+  const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail as { active: boolean; id: string };
+      const d = (e as CustomEvent).detail as { active: boolean; id: string; x: number; y: number };
       setEditMode(d.active);
       setSelectedWidgetId(d.id || null);
+      setLivePos({ x: d.x ?? 0, y: d.y ?? 0 });
     };
     window.addEventListener('vr-edit-state', handler);
     return () => window.removeEventListener('vr-edit-state', handler);
@@ -60,6 +62,12 @@ export const VrAtlasContainer = memo(() => {
     for (const w of vrWidgets) {
       const ww = w.layout.width;
       const wh = w.layout.height;
+      // During edit mode, use live position for the selected widget.
+      const isSelected = editMode && w.id === selectedWidgetId;
+      if (isSelected) {
+        result.push({ widgetId: w.id, x: livePos.x, y: livePos.y, width: ww, height: wh });
+        continue;
+      }
       if (w.vrAtlasX != null && w.vrAtlasY != null) {
         // User-placed: use saved position.
         result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
@@ -76,7 +84,7 @@ export const VrAtlasContainer = memo(() => {
       }
     }
     return result;
-  }, [vrWidgets]);
+  }, [vrWidgets, livePos, editMode, selectedWidgetId]);
 
   // Report the atlas layout to the main process.
   useEffect(() => {
