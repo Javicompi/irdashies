@@ -4,6 +4,10 @@ import { getWidget } from '../../WidgetIndex';
 import { WidgetContainer } from '../WidgetContainer';
 import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
 
+const noop = () => {
+  // VR atlas widgets are not draggable; no-op for the required prop.
+};
+
 interface AtlasSlot {
   widgetId: string;
   x: number;
@@ -88,6 +92,7 @@ export const VrAtlasContainer = memo(() => {
             }}
             editMode={false}
             zIndex={index + 1}
+            onLayoutChange={noop}
           >
             {running || widget.alwaysEnabled ? (
               <ErrorBoundary

@@ -23,7 +23,8 @@ const VR_MAX_TEXTURE_DIM = 2048;
 let osrWindow: BrowserWindow | null = null;
 let overlayManagerRef: OverlayManager | null = null;
 
-// Per-widget atlas layout reported by the VR atlas page.
+// Per-widget atlas layout reported by the VR atlas page. Stored for the
+// future per-widget quad path; the MVP publishes a single full-atlas layer.
 interface AtlasLayer {
   widgetId: string;
   sourceRect: [number, number, number, number];
@@ -31,24 +32,31 @@ interface AtlasLayer {
 let atlasLayout: AtlasLayer[] = [];
 let currentVrPose: VrPose | undefined;
 
+const DEFAULT_POSE: Required<VrPose> = {
+  position: [0, 0, -1.5],
+  orientation: [0, 0, 0, 1],
+  size: [0.5, 0.5],
+};
+
 function publishVrLayers(): void {
   if (!osrWindow) return;
-  const pose = currentVrPose ?? { position: [0, 0, -1.5], orientation: [0, 0, 0, 1], size: [0.5, 0.5] };
+  const pose = currentVrPose ?? DEFAULT_POSE;
   // Publish a single full-atlas layer. Per-widget quads with individual poses
   // come when per-widget VR placement settings land (future work).
   VrOverlayNative.setLayers([
     {
-      position: pose.position!,
-      orientation: pose.orientation!,
-      size: pose.size!,
-      sourceRect: [0, 0, atlasTexW, atlasTexH] as [number, number, number, number],
+      position: pose.position ?? DEFAULT_POSE.position,
+      orientation: pose.orientation ?? DEFAULT_POSE.orientation,
+      size: pose.size ?? DEFAULT_POSE.size,
+      sourceRect: [0, 0, atlasTexW, atlasTexH],
       opacity: 1,
       visible: 1,
     },
   ]);
 }
 
-// Listen for atlas layout reports from the VR atlas renderer page.
+// Listen for atlas layout reports from the VR atlas renderer page. Stored for
+// the future per-widget quad path; the MVP ignores it (full-atlas layer).
 ipcMain.on('vr-atlas-layout', (_event, layers: AtlasLayer[]) => {
   atlasLayout = layers;
   publishVrLayers();
