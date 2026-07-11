@@ -64,7 +64,6 @@ function publishVrLayers(): void {
 
   if (vrEditMode) {
     // Edit mode: one quad per VR widget, each with its own pose.
-    const globalPos = pose.position ?? DEFAULT_POSE.position;
     const layers = atlasLayout.map((slot) => ({
       position: getWidgetVrPosition(slot.widgetId, pose),
       orientation: pose.orientation ?? DEFAULT_POSE.orientation,
@@ -404,6 +403,8 @@ export function stopVrOverlay(): void {
   }
   overlayManagerRef?.restoreDesktopOverlays();
   overlayManagerRef = null;
+  // Persist any unsaved edit-mode positions on shutdown.
+  if (vrEditMode) saveVrPositionsToDashboard();
   unregisterEditKeys();
   if (globalShortcut.isRegistered('F9')) globalShortcut.unregister('F9');
   vrEditMode = false;
