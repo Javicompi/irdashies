@@ -182,7 +182,7 @@ function cycleSelectedWidget(): void {
   if (selectedWidgetId) {
     const [x, y] = getWidgetAtlasPos(selectedWidgetId);
     liveEditX = x; liveEditY = y;
-    liveEditZ = -(currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2]);
+    liveEditZ = currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2];
   }
   notifyRenderer();
 }
