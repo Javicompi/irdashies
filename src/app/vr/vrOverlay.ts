@@ -1,4 +1,4 @@
-import { BrowserWindow, globalShortcut, ipcMain } from 'electron';
+import { BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'path';
 import logger from '../logger';
 import type { OverlayManager } from '../overlayManager';
@@ -13,10 +13,6 @@ import { VrOverlayNative, type VrPose } from './native';
 // Injected by the forge vite plugin (same globals overlayManager uses).
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
-
-// Fixed VR atlas size — fits within Chromium OSR limits (~2K wide).
-const VR_ATLAS_WIDTH = 2560;
-const VR_ATLAS_HEIGHT = 1440;
 
 let osrWindow: BrowserWindow | null = null;
 let overlayManagerRef: OverlayManager | null = null;
@@ -284,14 +280,16 @@ export function startVrOverlay(
   overlayManagerRef = overlayManager;
   overlayManager.suppressDesktopOverlays();
 
-  // Create the OSR window at the fixed atlas size.
-  const texW = VR_ATLAS_WIDTH;
-  const texH = VR_ATLAS_HEIGHT;
-  const zoomFactor = 1;
+// Create the OSR window at the primary display size. Chromium OSR caps the
+// framebuffer to the display resolution, so a larger window is wasted.
+const { width: displayW, height: displayH } = screen.getPrimaryDisplay().size;
+const texW = displayW;
+const texH = displayH;
+const zoomFactor = 1;
 
-  quadAspect = texH / texW;
-  atlasTexW = texW;
-  atlasTexH = texH;
+quadAspect = texH / texW;
+atlasTexW = texW;
+atlasTexH = texH;
   const pose = poseFromSettings(settings);
   currentVrPose = pose;
 
