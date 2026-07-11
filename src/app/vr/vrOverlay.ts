@@ -1,4 +1,4 @@
-import { BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
+import { BrowserWindow, globalShortcut, ipcMain } from 'electron';
 import path from 'path';
 import logger from '../logger';
 import type { OverlayManager } from '../overlayManager';
@@ -14,13 +14,10 @@ import { VrOverlayNative, type VrPose } from './native';
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-// Supersampling: render the overlay at N x the display's pixel dimensions so the
-// quad has more texels and aliases less in the headset. The page still lays out
-// as if at the display size (via zoom factor); only the backing texture grows.
-// Caps at 2048 because VR runtimes reject swapchains above 4096 (and 2048 is
-// already very dense for a 1.8m-wide quad — ~1138 texels/m).
-const VR_SUPERSAMPLE = 8;
-const VR_MAX_TEXTURE_DIM = 2048;
+// Fixed VR atlas size — large canvas for free widget placement.
+// 3840x2160 (4K) gives plenty of room, well under the 4096 swapchain limit.
+const VR_ATLAS_WIDTH = 3840;
+const VR_ATLAS_HEIGHT = 2160;
 
 let osrWindow: BrowserWindow | null = null;
 let overlayManagerRef: OverlayManager | null = null;
@@ -39,7 +36,9 @@ let currentDashboard: DashboardLayout | undefined;
 let vrEditMode = false;
 let selectedWidgetIndex = 0;
 let selectedWidgetId: string | null = null;
-let liveEditPosition: [number, number, number] = [0, 0, -1.5];
+let liveEditX = 0;
+let liveEditY = 0;
+let liveEditZ = -1.5;
 
 const DEFAULT_POSE: Required<VrPose> = {
   position: [0, 0, -1.5],
@@ -47,15 +46,9 @@ const DEFAULT_POSE: Required<VrPose> = {
   size: [0.5, 0.5],
 };
 
-function getWidgetVrPosition(
-  widgetId: string,
-  globalPose: VrPose
-): [number, number, number] {
-  if (vrEditMode && widgetId === selectedWidgetId) return liveEditPosition;
+function getWidgetAtlasPos(widgetId: string): [number, number] {
   const widget = currentDashboard?.widgets.find((w) => w.id === widgetId);
-  const def = globalPose.position ?? DEFAULT_POSE.position;
-  const pos = widget?.vrPosition;
-  return pos ? [pos[0], pos[1], pos[2]] : [def[0], def[1], def[2]];
+  return [widget?.vrAtlasX ?? 0, widget?.vrAtlasY ?? 0];
 }
 
 function publishVrLayers(): void {
@@ -91,11 +84,12 @@ function registerEditKeys(): void {
     if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
     globalShortcut.register(accel, handler);
   };
+  const PX = 10;
   reg('Space', () => cycleSelectedWidget());
-  reg('Left',  () => moveSelected(-0.01, 0, 0));
-  reg('Right', () => moveSelected( 0.01, 0, 0));
-  reg('Up',    () => moveSelected(0,  0.01, 0));
-  reg('Down',  () => moveSelected(0, -0.01, 0));
+  reg('Left',  () => moveSelected(-PX, 0, 0));
+  reg('Right', () => moveSelected( PX, 0, 0));
+  reg('Up',    () => moveSelected(0, -PX, 0));
+  reg('Down',  () => moveSelected(0,  PX, 0));
   reg('Q',     () => moveSelected(0, 0, -0.01));
   reg('E',     () => moveSelected(0, 0,  0.01));
 }
@@ -113,29 +107,42 @@ function commitLivePositionToDashboard(): void {
   currentDashboard = {
     ...currentDashboard,
     widgets: currentDashboard.widgets.map((w) =>
-      w.id === selectedWidgetId ? { ...w, vrPosition: liveEditPosition } : w
+      w.id === selectedWidgetId
+        ? { ...w, vrAtlasX: liveEditX, vrAtlasY: liveEditY }
+        : w
     ),
   };
 }
 
-function saveVrPositionsToDashboard(): void {
+function saveVrEditPositions(): void {
   commitLivePositionToDashboard();
   if (!currentDashboard) return;
+  const z = -liveEditZ;
+  const vrSettings: VrOverlaySettings = {
+    ...DEFAULT_VR_OVERLAY_SETTINGS,
+    width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
+    distance: z,
+    horizontal: currentVrPose?.position?.[0] ?? 0,
+    vertical: currentVrPose?.position?.[1] ?? 0,
+  };
+  currentDashboard = {
+    ...currentDashboard,
+    generalSettings: { ...currentDashboard.generalSettings, vr: vrSettings },
+  };
   saveDashboard(getCurrentProfileId(), currentDashboard);
-  // Note: saveDashboard emits onDashboardUpdated, which calls
-  // applyVrOverlaySettings → publishVrLayers again (idempotent).
 }
 
 function notifyRenderer() {
   if (!osrWindow || osrWindow.isDestroyed()) return;
   osrWindow.webContents.executeJavaScript(
-    `window.__vrEdit={active:${vrEditMode},id:'${selectedWidgetId ?? ''}',pos:[${liveEditPosition.join(',')}]};` +
+    `window.__vrEdit={active:${vrEditMode},id:'${selectedWidgetId ?? ''}',` +
+    `x:${liveEditX},y:${liveEditY},z:${liveEditZ}};` +
     `window.dispatchEvent(new CustomEvent('vr-edit-state',{detail:window.__vrEdit}));`
   ).catch(() => {});
 }
 
 function toggleVrEditMode(): void {
-  logger.info('[VR] F9 pressed (osrWindow=%s)', osrWindow ? 'exists' : 'null');
+  logger.info('[VR] edit mode toggle (osrWindow=%s)', osrWindow ? 'exists' : 'null');
   if (!osrWindow || osrWindow.isDestroyed()) return;
   vrEditMode = !vrEditMode;
 
@@ -143,13 +150,15 @@ function toggleVrEditMode(): void {
     selectedWidgetIndex = 0;
     selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
     if (selectedWidgetId) {
-      liveEditPosition = getWidgetVrPosition(selectedWidgetId, currentVrPose ?? DEFAULT_POSE);
+      const [x, y] = getWidgetAtlasPos(selectedWidgetId);
+      liveEditX = x; liveEditY = y;
+      liveEditZ = -(currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2]);
     }
     registerEditKeys();
     logger.info('[VR] edit mode ON');
   } else {
     unregisterEditKeys();
-    saveVrPositionsToDashboard();
+    saveVrEditPositions();
     selectedWidgetId = null;
     logger.info('[VR] edit mode OFF');
   }
@@ -163,19 +172,35 @@ function cycleSelectedWidget(): void {
   commitLivePositionToDashboard();
   selectedWidgetIndex = (selectedWidgetIndex + 1) % atlasLayout.length;
   selectedWidgetId = atlasLayout[selectedWidgetIndex].widgetId;
-  liveEditPosition = getWidgetVrPosition(selectedWidgetId, currentVrPose ?? DEFAULT_POSE);
+  if (selectedWidgetId) {
+    const [x, y] = getWidgetAtlasPos(selectedWidgetId);
+    liveEditX = x; liveEditY = y;
+    liveEditZ = -(currentVrPose?.position?.[2] ?? DEFAULT_POSE.position[2]);
+  }
   notifyRenderer();
 }
 
 function moveSelected(dx: number, dy: number, dz: number): void {
   if (!vrEditMode || !selectedWidgetId) return;
-  liveEditPosition = [
-    +(liveEditPosition[0] + dx).toFixed(3),
-    +(liveEditPosition[1] + dy).toFixed(3),
-    +(liveEditPosition[2] + dz).toFixed(3),
-  ];
-  notifyRenderer();
-  publishVrLayers();
+
+  if (dx !== 0 || dy !== 0) {
+    liveEditX = Math.max(0, Math.min(liveEditX + dx, atlasTexW - 1));
+    liveEditY = Math.max(0, Math.min(liveEditY + dy, atlasTexH - 1));
+    notifyRenderer();
+  }
+
+  if (dz !== 0) {
+    liveEditZ = Math.max(-4, Math.min(liveEditZ + dz, -0.5));
+    const settings: VrOverlaySettings = {
+      ...DEFAULT_VR_OVERLAY_SETTINGS,
+      width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
+      distance: -liveEditZ,
+      horizontal: currentVrPose?.position?.[0] ?? 0,
+      vertical: currentVrPose?.position?.[1] ?? 0,
+    };
+    applyVrOverlaySettings(settings);
+    notifyRenderer();
+  }
 }
 
 export function updateVrDashboard(dashboard: DashboardLayout): void {
@@ -247,21 +272,12 @@ export function startVrOverlay(
   overlayManagerRef = overlayManager;
   overlayManager.suppressDesktopOverlays();
 
-  // Lay out at the primary display size (so widget pixel coordinates land where
-  // intended) but render into a larger backing texture for supersampling.
-  const { width: displayW, height: displayH } = screen.getPrimaryDisplay().size;
-  let scale = Math.min(
-    VR_SUPERSAMPLE,
-    VR_MAX_TEXTURE_DIM / Math.max(displayW, displayH)
-  );
-  scale = Math.max(1, scale);
-  const texW = Math.round(displayW * scale);
-  const texH = Math.round(displayH * scale);
-  atlasTexW = texW;
-  atlasTexH = texH;
-  const zoomFactor = texW / displayW;
+  // Create the OSR window at the fixed atlas size.
+  const texW = VR_ATLAS_WIDTH;
+  const texH = VR_ATLAS_HEIGHT;
+  const zoomFactor = 1;
 
-  quadAspect = displayH / displayW;
+  quadAspect = texH / texW;
   const pose = poseFromSettings(settings);
   currentVrPose = pose;
 
@@ -401,7 +417,7 @@ export function stopVrOverlay(): void {
   overlayManagerRef?.restoreDesktopOverlays();
   overlayManagerRef = null;
   // Persist any unsaved edit-mode positions on shutdown.
-  if (vrEditMode) saveVrPositionsToDashboard();
+  if (vrEditMode) saveVrEditPositions();
   unregisterEditKeys();
   if (globalShortcut.isRegistered('CommandOrControl+Shift+F9')) globalShortcut.unregister('CommandOrControl+Shift+F9');
   vrEditMode = false;

@@ -23,14 +23,12 @@ export const VrAtlasContainer = memo(() => {
 
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
-  const [, setLivePosition] = useState<[number, number, number]>([0, 0, -1.5]);
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { active: boolean; id: string; pos: number[] };
-      setEditMode(detail.active);
-      setSelectedWidgetId(detail.id || null);
-      setLivePosition([detail.pos[0] ?? 0, detail.pos[1] ?? 0, detail.pos[2] ?? -1.5]);
+      const d = (e as CustomEvent).detail as { active: boolean; id: string };
+      setEditMode(d.active);
+      setSelectedWidgetId(d.id || null);
     };
     window.addEventListener('vr-edit-state', handler);
     return () => window.removeEventListener('vr-edit-state', handler);
@@ -53,29 +51,32 @@ export const VrAtlasContainer = memo(() => {
   // Shelf-packing: left-to-right, wrap to next row.
   const slots = useMemo<AtlasSlot[]>(() => {
     const result: AtlasSlot[] = [];
-    let x = 0;
-    let y = 0;
+    let fallbackX = 0;
+    let fallbackY = 0;
     let rowH = 0;
+    const padding = 4;
+    const atlasWidth = window.innerWidth;
+
     for (const w of vrWidgets) {
       const ww = w.layout.width;
       const wh = w.layout.height;
-      if (x + ww > atlasWidth && x > 0) {
-        x = 0;
-        y += rowH + padding;
-        rowH = 0;
+      if (w.vrAtlasX != null && w.vrAtlasY != null) {
+        // User-placed: use saved position.
+        result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
+      } else {
+        // Auto-pack fallback (first run, before edit mode).
+        if (fallbackX + ww > atlasWidth && fallbackX > 0) {
+          fallbackX = 0;
+          fallbackY += rowH + padding;
+          rowH = 0;
+        }
+        result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
+        fallbackX += ww + padding;
+        rowH = Math.max(rowH, wh);
       }
-      result.push({
-        widgetId: w.id,
-        x,
-        y,
-        width: ww,
-        height: wh,
-      });
-      x += ww + padding;
-      rowH = Math.max(rowH, wh);
     }
     return result;
-  }, [vrWidgets, atlasWidth]);
+  }, [vrWidgets]);
 
   // Report the atlas layout to the main process.
   useEffect(() => {

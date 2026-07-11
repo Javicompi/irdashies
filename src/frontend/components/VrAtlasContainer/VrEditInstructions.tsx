@@ -1,12 +1,12 @@
 import { memo, useState, useEffect } from 'react';
 
 export const VrEditInstructions = memo(() => {
-  const [position, setPosition] = useState<[number, number, number]>([0, 0, -1.5]);
+  const [pos, setPos] = useState({ x: 0, y: 0, z: -1.5 });
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { pos: number[] };
-      setPosition([detail.pos[0] ?? 0, detail.pos[1] ?? 0, detail.pos[2] ?? -1.5]);
+      const d = (e as CustomEvent).detail as { x: number; y: number; z: number };
+      setPos({ x: d.x ?? 0, y: d.y ?? 0, z: d.z ?? -1.5 });
     };
     window.addEventListener('vr-edit-state', handler);
     return () => window.removeEventListener('vr-edit-state', handler);
@@ -32,19 +32,25 @@ export const VrEditInstructions = memo(() => {
         </div>
         <div className="flex items-baseline text-sm">
           <span className="w-48 font-bold text-slate-300">Arrow keys</span>
-          <span className="text-white/75">Adjust position X / Y</span>
+          <span className="text-white/75">Move overlay (X / Y)</span>
         </div>
         <div className="flex items-baseline text-sm">
           <span className="w-48 font-bold text-slate-300">Q / E</span>
-          <span className="text-white/75">Adjust distance Z</span>
+          <span className="text-white/75">Distance -- all overlays (Z)</span>
         </div>
       </div>
       <div className="flex items-baseline justify-between text-sm pt-3 border-t border-slate-600/20">
         <span className="font-bold text-slate-300">Position</span>
         <div className="flex gap-6">
-          <span className="font-bold text-green-400 tabular-nums min-w-[64px] text-center">X: {fmt(position[0])}</span>
-          <span className="font-bold text-green-400 tabular-nums min-w-[64px] text-center">Y: {fmt(position[1])}</span>
-          <span className="font-bold text-green-400 tabular-nums min-w-[64px] text-center">Z: {fmt(position[2])}</span>
+          <span className="font-bold text-green-400 tabular-nums min-w-[80px] text-center">
+            X: {pos.x.toFixed(0)}px
+          </span>
+          <span className="font-bold text-green-400 tabular-nums min-w-[80px] text-center">
+            Y: {pos.y.toFixed(0)}px
+          </span>
+          <span className="font-bold text-green-400 tabular-nums min-w-[80px] text-center">
+            Z: {pos.z.toFixed(2)}m
+          </span>
         </div>
       </div>
     </div>
