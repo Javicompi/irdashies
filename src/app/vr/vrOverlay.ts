@@ -153,6 +153,20 @@ function toggleVrEditMode(): void {
   vrEditMode = !vrEditMode;
 
   if (vrEditMode) {
+    // On first entry to edit mode, give each widget a default spread-out
+    // position so they don't all stack at the centre.
+    const globalPos = (currentVrPose ?? DEFAULT_POSE).position ?? DEFAULT_POSE.position;
+    currentDashboard = currentDashboard
+      ? {
+          ...currentDashboard,
+          widgets: currentDashboard.widgets.map((w, i) => {
+            if (w.vrPosition) return w;
+            const offset = i * 0.15;
+            return { ...w, vrPosition: [globalPos[0], globalPos[1] + offset, globalPos[2]] as [number, number, number] };
+          }),
+        }
+      : currentDashboard;
+
     selectedWidgetIndex = 0;
     selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
     if (selectedWidgetId) {
