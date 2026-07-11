@@ -237,7 +237,6 @@ export function registerVrEditKeys(): void {
 // ----------------------------------------------------------------
 ipcMain.on('vr-atlas-layout', (_event, layers: AtlasLayer[]) => {
   atlasLayout = layers;
-  publishVrLayers();
 });
 
 // Quad height follows the primary display aspect (height / width) so the texture
