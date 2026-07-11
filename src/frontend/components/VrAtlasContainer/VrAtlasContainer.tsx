@@ -58,11 +58,21 @@ export const VrAtlasContainer = memo(() => {
   // Shelf-packing: left-to-right, wrap to next row.
   const slots = useMemo<AtlasSlot[]>(() => {
     const result: AtlasSlot[] = [];
-    let fallbackX = 0;
-    let fallbackY = 0;
-    let rowH = 0;
     const padding = 4;
     const atlasWidth = window.innerWidth;
+
+    // Compute the total width needed for auto-packed widgets to centre them.
+    let packedW = 0;
+    let packedCount = 0;
+    for (const w of vrWidgets) {
+      if (w.vrAtlasX != null || livePosCache.current.has(w.id)) continue;
+      packedW += w.layout.width + (packedCount > 0 ? padding : 0);
+      packedCount++;
+    }
+    const startX = Math.max(0, Math.round((atlasWidth - packedW) / 2));
+    let fallbackX = startX;
+    let fallbackY = 0;
+    let rowH = 0;
 
     for (const w of vrWidgets) {
       const ww = w.layout.width;
@@ -84,8 +94,8 @@ export const VrAtlasContainer = memo(() => {
         result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
       } else {
         // Auto-pack fallback (first run, before edit mode).
-        if (fallbackX + ww > atlasWidth && fallbackX > 0) {
-          fallbackX = 0;
+        if (fallbackX + ww > atlasWidth && fallbackX > startX) {
+          fallbackX = startX;
           fallbackY += rowH + padding;
           rowH = 0;
         }

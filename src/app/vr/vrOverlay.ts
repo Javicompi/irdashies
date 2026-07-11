@@ -143,7 +143,14 @@ function notifyRenderer() {
   ).catch(() => {});
 }
 
+let lastToggleTime = 0;
+
 function toggleVrEditMode(): void {
+  // Debounce: ignore rapid re-triggers from modifier+key combos.
+  const now = Date.now();
+  if (now - lastToggleTime < 400) return;
+  lastToggleTime = now;
+
   logger.info('[VR] toggleEdit: entering=%s osrWindow=%s', vrEditMode ? 'exit' : 'enter', osrWindow ? 'exists' : 'null');
   if (!osrWindow || osrWindow.isDestroyed()) return;
   vrEditMode = !vrEditMode;
