@@ -65,7 +65,7 @@ export const VrAtlasContainer = memo(() => {
     let packedW = 0;
     let packedCount = 0;
     for (const w of vrWidgets) {
-      if (w.vrAtlasX != null || livePosCache.current.has(w.id)) continue;
+      if (livePosCache.current.has(w.id)) continue;
       packedW += w.layout.width + (packedCount > 0 ? padding : 0);
       packedCount++;
     }
@@ -89,20 +89,16 @@ export const VrAtlasContainer = memo(() => {
         result.push({ widgetId: w.id, x: cached.x, y: cached.y, width: ww, height: wh });
         continue;
       }
-      if (w.vrAtlasX != null && w.vrAtlasY != null) {
-        // User-placed: use saved position.
-        result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
-      } else {
-        // Auto-pack fallback (first run, before edit mode).
-        if (fallbackX + ww > atlasWidth && fallbackX > startX) {
-          fallbackX = startX;
-          fallbackY += rowH + padding;
-          rowH = 0;
-        }
-        result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
-        fallbackX += ww + padding;
-        rowH = Math.max(rowH, wh);
+      // Auto-pack fallback for all non-cached widgets (centered).
+      if (fallbackX + ww > atlasWidth && fallbackX > startX) {
+        fallbackX = startX;
+        fallbackY += rowH + padding;
+        rowH = 0;
       }
+      result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
+      fallbackX += ww + padding;
+      rowH = Math.max(rowH, wh);
+    }
     }
     return result;
   }, [vrWidgets, livePos, editMode, selectedWidgetId]);
