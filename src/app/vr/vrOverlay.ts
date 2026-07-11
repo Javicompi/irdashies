@@ -47,8 +47,15 @@ const DEFAULT_POSE: Required<VrPose> = {
 };
 
 function getWidgetAtlasPos(widgetId: string): [number, number] {
+  // Check saved position first.
   const widget = currentDashboard?.widgets.find((w) => w.id === widgetId);
-  return [widget?.vrAtlasX ?? 0, widget?.vrAtlasY ?? 0];
+  if (widget?.vrAtlasX != null && widget?.vrAtlasY != null) {
+    return [widget.vrAtlasX, widget.vrAtlasY];
+  }
+  // Fall back to current atlas slot position (from VrAtlasContainer report).
+  const slot = atlasLayout.find((s) => s.widgetId === widgetId);
+  if (slot) return [slot.sourceRect[0], slot.sourceRect[1]];
+  return [0, 0];
 }
 
 function publishVrLayers(): void {
@@ -373,6 +380,7 @@ export function startVrOverlay(
   }
 
   logger.info('[VR] overlay started (OSR -> shared memory -> OpenXR layer)');
+  publishVrLayers();
 }
 
 /**
