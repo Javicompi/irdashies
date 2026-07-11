@@ -156,6 +156,19 @@ function toggleVrEditMode(): void {
   vrEditMode = !vrEditMode;
 
   if (vrEditMode) {
+    // Reset all stored positions so the centering logic in VrAtlasContainer
+    // applies fresh. The user re-positions from scratch each edit session.
+    if (currentDashboard) {
+      currentDashboard = {
+        ...currentDashboard,
+        widgets: currentDashboard.widgets.map((w) => ({
+          ...w,
+          vrAtlasX: undefined as any,
+          vrAtlasY: undefined as any,
+        })),
+      };
+    }
+
     selectedWidgetIndex = 0;
     selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
     if (selectedWidgetId) {
