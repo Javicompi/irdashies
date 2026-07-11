@@ -201,12 +201,13 @@ export function updateVrDashboard(dashboard: DashboardLayout): void {
 
 /** Register F9 for VR edit mode. Called from main.ts after KeybindingManager. */
 export function registerVrEditKeys(): void {
-  if (!globalShortcut.isRegistered('F9')) {
-    const ok = globalShortcut.register('F9', toggleVrEditMode);
+  const accel = 'CommandOrControl+Shift+F9';
+  if (!globalShortcut.isRegistered(accel)) {
+    const ok = globalShortcut.register(accel, toggleVrEditMode);
     if (!ok) {
-      logger.error('[VR] Failed to register F9 for edit mode');
+      logger.error('[VR] Failed to register %s for edit mode', accel);
     } else {
-      logger.info('[VR] F9 registered for edit mode');
+      logger.info('[VR] %s registered for edit mode', accel);
     }
   }
 }
@@ -419,6 +420,6 @@ export function stopVrOverlay(): void {
   // Persist any unsaved edit-mode positions on shutdown.
   if (vrEditMode) saveVrPositionsToDashboard();
   unregisterEditKeys();
-  if (globalShortcut.isRegistered('F9')) globalShortcut.unregister('F9');
+  if (globalShortcut.isRegistered('CommandOrControl+Shift+F9')) globalShortcut.unregister('CommandOrControl+Shift+F9');
   vrEditMode = false;
 }

@@ -22,7 +22,7 @@ export const VrEditInstructions = memo(() => {
     >
       <div className="flex flex-col gap-2 mb-3">
         <div className="flex items-baseline text-sm">
-          <span className="w-48 font-bold text-slate-300">F9</span>
+          <span className="w-48 font-bold text-slate-300">Ctrl+Shift+F9</span>
           <span className="text-white/75">Exit edit mode</span>
         </div>
         <div className="flex items-baseline text-sm">
