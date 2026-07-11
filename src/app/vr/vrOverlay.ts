@@ -62,31 +62,10 @@ function publishVrLayers(): void {
   if (!osrWindow) return;
   const pose = currentVrPose ?? DEFAULT_POSE;
 
-  if (vrEditMode) {
-    // Edit mode: one quad per VR widget, each with its own pose.
-    const layers = atlasLayout.map((slot) => ({
-      position: getWidgetVrPosition(slot.widgetId, pose),
-      orientation: pose.orientation ?? DEFAULT_POSE.orientation,
-      size: pose.size ?? DEFAULT_POSE.size,
-      sourceRect: slot.sourceRect,
-      opacity: 1,
-      visible: 1,
-    }));
-    // Instructions overlay as a fixed quad at the bottom of the atlas.
-    const instrH = 200;
-    layers.push({
-      position: [0, -0.15, -1.2],
-      orientation: [0, 0, 0, 1],
-      size: pose.size ?? DEFAULT_POSE.size,
-      sourceRect: [0, atlasTexH - instrH, atlasTexW, instrH],
-      opacity: 1,
-      visible: 1,
-    });
-    VrOverlayNative.setLayers(layers);
-    return;
-  }
-
-  // Normal mode: single full-atlas quad.
+  // Always publish a single full-atlas layer. In edit mode, the VR atlas page
+  // renders green borders + instructions directly into the atlas texture, so
+  // the consumer sees everything in one quad. Per-widget quads are deferred
+  // until we have stable multi-quad consumer behaviour.
   VrOverlayNative.setLayers([
     {
       position: pose.position ?? DEFAULT_POSE.position,
@@ -153,20 +132,6 @@ function toggleVrEditMode(): void {
   vrEditMode = !vrEditMode;
 
   if (vrEditMode) {
-    // On first entry to edit mode, give each widget a default spread-out
-    // position so they don't all stack at the centre.
-    const globalPos = (currentVrPose ?? DEFAULT_POSE).position ?? DEFAULT_POSE.position;
-    currentDashboard = currentDashboard
-      ? {
-          ...currentDashboard,
-          widgets: currentDashboard.widgets.map((w, i) => {
-            if (w.vrPosition) return w;
-            const offset = i * 0.15;
-            return { ...w, vrPosition: [globalPos[0], globalPos[1] + offset, globalPos[2]] as [number, number, number] };
-          }),
-        }
-      : currentDashboard;
-
     selectedWidgetIndex = 0;
     selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
     if (selectedWidgetId) {
