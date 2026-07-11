@@ -60,18 +60,10 @@ export const VrAtlasContainer = memo(() => {
     const result: AtlasSlot[] = [];
     const padding = 4;
     const atlasWidth = window.innerWidth;
-
-    // Compute the total width needed for auto-packed widgets to centre them.
-    let packedW = 0;
-    let packedCount = 0;
-    for (const w of vrWidgets) {
-      if (livePosCache.current.has(w.id)) continue;
-      packedW += w.layout.width + (packedCount > 0 ? padding : 0);
-      packedCount++;
-    }
-    const startX = Math.max(0, Math.round((atlasWidth - packedW) / 2));
-    let fallbackX = startX;
-    let fallbackY = 0;
+    // Start with a left margin so widgets aren't pinned to the left edge.
+    const MARGIN_X = 200;
+    let fallbackX = MARGIN_X;
+    let fallbackY = MARGIN_X;
     let rowH = 0;
 
     for (const w of vrWidgets) {
@@ -90,8 +82,8 @@ export const VrAtlasContainer = memo(() => {
         continue;
       }
       // Auto-pack fallback for all non-cached widgets (centered).
-      if (fallbackX + ww > atlasWidth && fallbackX > startX) {
-        fallbackX = startX;
+      if (fallbackX + ww > atlasWidth - MARGIN_X && fallbackX > MARGIN_X) {
+        fallbackX = MARGIN_X;
         fallbackY += rowH + padding;
         rowH = 0;
       }
