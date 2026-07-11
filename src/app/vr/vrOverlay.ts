@@ -148,7 +148,7 @@ let lastToggleTime = 0;
 function toggleVrEditMode(): void {
   // Debounce: ignore rapid re-triggers from modifier+key combos.
   const now = Date.now();
-  if (now - lastToggleTime < 400) return;
+  if (now - lastToggleTime < 800) return;
   lastToggleTime = now;
 
   logger.info('[VR] toggleEdit: entering=%s osrWindow=%s', vrEditMode ? 'exit' : 'enter', osrWindow ? 'exists' : 'null');
