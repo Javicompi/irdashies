@@ -5,9 +5,9 @@ export const VrEditInstructions = memo(() => {
 
   useEffect(() => {
     if (!window.vrEditBridge) return;
-    const unmove = window.vrEditBridge.onMove((pos) => setPosition(pos));
-    const unsel = window.vrEditBridge.onSelect((_, pos) => setPosition(pos));
-    const unmode = window.vrEditBridge.onEditMode((_, __, pos) => setPosition(pos));
+    const unmove = window.vrEditBridge.onMove((pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
+    const unsel = window.vrEditBridge.onSelect((_, pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
+    const unmode = window.vrEditBridge.onEditMode((_, __, pos) => setPosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]));
     return () => { unmove(); unsel(); unmode(); };
   }, []);
 

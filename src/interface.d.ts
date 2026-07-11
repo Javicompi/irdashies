@@ -27,9 +27,9 @@ declare global {
       reportLayout: (layers: { widgetId: string; sourceRect: [number, number, number, number] }[]) => void;
     };
     vrEditBridge?: {
-      onEditMode: (cb: (active: boolean, selectedId: string | null, position: [number, number, number]) => void) => () => void;
-      onSelect: (cb: (widgetId: string, position: [number, number, number]) => void) => () => void;
-      onMove: (cb: (position: [number, number, number]) => void) => () => void;
+      onEditMode: (cb: (active: boolean, id: string, pos: number[]) => () => void) => () => void;
+      onSelect: (cb: (id: string, pos: number[]) => () => void) => () => void;
+      onMove: (cb: (pos: number[]) => () => void) => () => void;
     };
   }
 }

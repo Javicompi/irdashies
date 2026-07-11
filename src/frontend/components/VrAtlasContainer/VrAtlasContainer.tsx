@@ -29,14 +29,16 @@ export const VrAtlasContainer = memo(() => {
     if (!window.vrEditBridge) return;
     const unmode = window.vrEditBridge.onEditMode((active, id, pos) => {
       setEditMode(active);
-      setSelectedWidgetId(id);
-      setLivePosition(pos);
+      setSelectedWidgetId(id || null);
+      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
     });
     const unsel = window.vrEditBridge.onSelect((id, pos) => {
-      setSelectedWidgetId(id);
-      setLivePosition(pos);
+      setSelectedWidgetId(id || null);
+      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
     });
-    const unmove = window.vrEditBridge.onMove((pos) => setLivePosition(pos));
+    const unmove = window.vrEditBridge.onMove((pos) => {
+      setLivePosition([pos[0] ?? 0, pos[1] ?? 0, pos[2] ?? -1.5]);
+    });
     return () => { unmode(); unsel(); unmove(); };
   }, []);
 

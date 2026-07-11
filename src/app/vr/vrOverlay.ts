@@ -181,7 +181,7 @@ function toggleVrEditMode(): void {
     logger.info('[VR] edit mode OFF');
   }
 
-  osrWindow.webContents.send('vr-edit-mode', vrEditMode, selectedWidgetId, liveEditPosition);
+  osrWindow.webContents.send('vr-edit-mode', vrEditMode, selectedWidgetId ?? '', liveEditPosition);
   publishVrLayers();
 }
 

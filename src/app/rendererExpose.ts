@@ -64,26 +64,25 @@ export function exposeInMainWorld() {
     ) => ipcRenderer.send('vr-atlas-layout', layers),
   });
 
-  contextBridge.exposeInMainWorld('vrEditBridge', {
-    onEditMode: (
-      cb: (active: boolean, selectedId: string | null, position: [number, number, number]) => void
-    ) => {
-      const listener = (_: Electron.IpcRendererEvent, active: boolean, selectedId: string | null, position: [number, number, number]) =>
-        cb(active, selectedId, position);
-      ipcRenderer.on('vr-edit-mode', listener);
-      return () => ipcRenderer.removeListener('vr-edit-mode', listener);
-    },
-    onSelect: (cb: (widgetId: string, position: [number, number, number]) => void) => {
-      const listener = (_: Electron.IpcRendererEvent, widgetId: string, position: [number, number, number]) =>
-        cb(widgetId, position);
-      ipcRenderer.on('vr-edit-select', listener);
-      return () => ipcRenderer.removeListener('vr-edit-select', listener);
-    },
-    onMove: (cb: (position: [number, number, number]) => void) => {
-      const listener = (_: Electron.IpcRendererEvent, position: [number, number, number]) =>
-        cb(position);
-      ipcRenderer.on('vr-edit-move', listener);
-      return () => ipcRenderer.removeListener('vr-edit-move', listener);
-    },
-  });
+  try {
+    contextBridge.exposeInMainWorld('vrEditBridge', {
+      onEditMode: (cb: (active: boolean, id: string, pos: number[]) => () => void) => {
+        const listener = (_: unknown, active: boolean, id: string, pos: number[]) => cb(active, id, pos);
+        ipcRenderer.on('vr-edit-mode', listener);
+        return () => { try { ipcRenderer.removeListener('vr-edit-mode', listener); } catch {} };
+      },
+      onSelect: (cb: (id: string, pos: number[]) => () => void) => {
+        const listener = (_: unknown, id: string, pos: number[]) => cb(id, pos);
+        ipcRenderer.on('vr-edit-select', listener);
+        return () => { try { ipcRenderer.removeListener('vr-edit-select', listener); } catch {} };
+      },
+      onMove: (cb: (pos: number[]) => () => void) => {
+        const listener = (_: unknown, pos: number[]) => cb(pos);
+        ipcRenderer.on('vr-edit-move', listener);
+        return () => { try { ipcRenderer.removeListener('vr-edit-move', listener); } catch {} };
+      },
+    });
+  } catch {
+    // vrEditBridge is optional; edit mode silently degrades.
+  }
 }
