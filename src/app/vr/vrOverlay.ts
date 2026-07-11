@@ -148,6 +148,7 @@ function saveVrPositionsToDashboard(): void {
 }
 
 function toggleVrEditMode(): void {
+  logger.info('[VR] F9 pressed (osrWindow=%s)', osrWindow ? 'exists' : 'null');
   if (!osrWindow || osrWindow.isDestroyed()) return;
   vrEditMode = !vrEditMode;
 
@@ -201,7 +202,12 @@ export function updateVrDashboard(dashboard: DashboardLayout): void {
 /** Register F9 for VR edit mode. Called from main.ts after KeybindingManager. */
 export function registerVrEditKeys(): void {
   if (!globalShortcut.isRegistered('F9')) {
-    globalShortcut.register('F9', toggleVrEditMode);
+    const ok = globalShortcut.register('F9', toggleVrEditMode);
+    if (!ok) {
+      logger.error('[VR] Failed to register F9 for edit mode');
+    } else {
+      logger.info('[VR] F9 registered for edit mode');
+    }
   }
 }
 

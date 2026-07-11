@@ -62,9 +62,11 @@ const OverlayApp = () => {
 /** Lightweight renderer for the VR atlas OSR window. */
 const VrAtlasApp = () => {
   return (
-    <ThemeManager>
-      <VrAtlasContainer />
-    </ThemeManager>
+    <HideUIWrapper>
+      <ThemeManager>
+        <VrAtlasContainer />
+      </ThemeManager>
+    </HideUIWrapper>
   );
 };
 
