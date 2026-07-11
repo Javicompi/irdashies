@@ -14,10 +14,9 @@ import { VrOverlayNative, type VrPose } from './native';
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-// Fixed VR atlas size — large canvas for free widget placement.
-// 3840x2160 (4K) gives plenty of room, well under the 4096 swapchain limit.
-const VR_ATLAS_WIDTH = 3840;
-const VR_ATLAS_HEIGHT = 2160;
+// Fixed VR atlas size — fits within Chromium OSR limits (~2K wide).
+const VR_ATLAS_WIDTH = 2560;
+const VR_ATLAS_HEIGHT = 1440;
 
 let osrWindow: BrowserWindow | null = null;
 let overlayManagerRef: OverlayManager | null = null;
