@@ -59,8 +59,9 @@ function getWidgetAtlasPos(widgetId: string): [number, number] {
 }
 
 function publishVrLayers(): void {
-  if (!osrWindow) return;
+  if (!osrWindow) { logger.warn('[VR] publishVrLayers: no osrWindow'); return; }
   const pose = currentVrPose ?? DEFAULT_POSE;
+  logger.info('[VR] publishVrLayers: atlas=%dx%d pos=[%s]', atlasTexW, atlasTexH, pose.position?.join(','));
 
   // Always publish a single full-atlas layer. In edit mode, the VR atlas page
   // renders green borders + instructions directly into the atlas texture, so
@@ -149,7 +150,7 @@ function notifyRenderer() {
 }
 
 function toggleVrEditMode(): void {
-  logger.info('[VR] edit mode toggle (osrWindow=%s)', osrWindow ? 'exists' : 'null');
+  logger.info('[VR] toggleEdit: entering=%s osrWindow=%s', vrEditMode ? 'exit' : 'enter', osrWindow ? 'exists' : 'null');
   if (!osrWindow || osrWindow.isDestroyed()) return;
   vrEditMode = !vrEditMode;
 

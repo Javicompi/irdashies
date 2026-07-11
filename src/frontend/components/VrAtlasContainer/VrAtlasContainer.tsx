@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useDashboard, useRunningState } from '@irdashies/context';
 import { getWidget } from '../../WidgetIndex';
 import { WidgetContainer } from '../WidgetContainer';
@@ -24,13 +24,17 @@ export const VrAtlasContainer = memo(() => {
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const livePosCache = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail as { active: boolean; id: string; x: number; y: number };
       setEditMode(d.active);
       setSelectedWidgetId(d.id || null);
-      setLivePos({ x: d.x ?? 0, y: d.y ?? 0 });
+      const pos = { x: d.x ?? 0, y: d.y ?? 0 };
+      setLivePos(pos);
+      // Cache the live position for this widget so it persists after deselection.
+      if (d.id) livePosCache.current.set(d.id, pos);
     };
     window.addEventListener('vr-edit-state', handler);
     return () => window.removeEventListener('vr-edit-state', handler);
@@ -66,6 +70,12 @@ export const VrAtlasContainer = memo(() => {
       const isSelected = editMode && w.id === selectedWidgetId;
       if (isSelected) {
         result.push({ widgetId: w.id, x: livePos.x, y: livePos.y, width: ww, height: wh });
+        continue;
+      }
+      // Check the live cache first (positions from this edit session).
+      const cached = livePosCache.current.get(w.id);
+      if (cached) {
+        result.push({ widgetId: w.id, x: cached.x, y: cached.y, width: ww, height: wh });
         continue;
       }
       if (w.vrAtlasX != null && w.vrAtlasY != null) {
