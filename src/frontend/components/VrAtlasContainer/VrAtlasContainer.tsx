@@ -78,15 +78,20 @@ const slots = useMemo<AtlasSlot[]>(() => {
         result.push({ widgetId: w.id, x: cached.x, y: cached.y, width: ww, height: wh });
         continue;
       }
-      // Auto-pack fallback for all non-cached widgets (centered).
-      if (fallbackX + ww > atlasWidth - MARGIN_X && fallbackX > MARGIN_X) {
-        fallbackX = MARGIN_X;
-        fallbackY += rowH + padding;
-        rowH = 0;
+      // Use saved position if available; otherwise auto-pack with margin.
+      if (w.vrAtlasX != null && w.vrAtlasY != null) {
+        result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
+      } else {
+        // Auto-pack fallback.
+        if (fallbackX + ww > atlasWidth - MARGIN_X && fallbackX > MARGIN_X) {
+          fallbackX = MARGIN_X;
+          fallbackY += rowH + padding;
+          rowH = 0;
+        }
+        result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
+        fallbackX += ww + padding;
+        rowH = Math.max(rowH, wh);
       }
-      result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
-      fallbackX += ww + padding;
-      rowH = Math.max(rowH, wh);
     }
     return result;
   }, [vrWidgets, livePos, editMode, selectedWidgetId]);
