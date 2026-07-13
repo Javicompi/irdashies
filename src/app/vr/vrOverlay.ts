@@ -34,6 +34,7 @@ let selectedWidgetId: string | null = null;
 let liveEditX = 0;
 let liveEditY = 0;
 let liveEditZ = -1.5;
+let zMoveTimer: ReturnType<typeof setTimeout> | undefined;
 
 const DEFAULT_POSE: Required<VrPose> = {
   position: [0, 0, -1.5],
@@ -102,6 +103,7 @@ function unregisterEditKeys(): void {
   for (const accel of ['Space', 'Left', 'Right', 'Up', 'Down', 'Q', 'E']) {
     if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
   }
+  if (zMoveTimer) { clearTimeout(zMoveTimer); zMoveTimer = undefined; }
 }
 
 function commitLivePositionToDashboard(): void {
@@ -140,7 +142,7 @@ function notifyRenderer() {
     `window.__vrEdit={active:${vrEditMode},id:'${selectedWidgetId ?? ''}',` +
     `x:${liveEditX},y:${liveEditY},z:${liveEditZ}};` +
     `window.dispatchEvent(new CustomEvent('vr-edit-state',{detail:window.__vrEdit}));`
-  ).catch(() => {});
+  ).catch(() => undefined);
 }
 
 let lastToggleTime = 0;
@@ -163,8 +165,8 @@ function toggleVrEditMode(): void {
         ...currentDashboard,
         widgets: currentDashboard.widgets.map((w) => ({
           ...w,
-          vrAtlasX: undefined as any,
-          vrAtlasY: undefined as any,
+          vrAtlasX: undefined,
+          vrAtlasY: undefined,
         })),
       };
     }
@@ -213,11 +215,9 @@ function moveSelected(dx: number, dy: number, dz: number): void {
 
   if (dz !== 0) {
     liveEditZ = Math.max(-4, Math.min(liveEditZ + dz, -0.5));
-    // Debounce: only update the shared pose every 100ms to avoid flooding
-    // setPose/publishVrLayers on every key repeat.
-    if (!moveSelected._zTimer) {
-      moveSelected._zTimer = setTimeout(() => {
-        moveSelected._zTimer = undefined;
+    if (!zMoveTimer) {
+      zMoveTimer = setTimeout(() => {
+        zMoveTimer = undefined;
         applyVrOverlaySettings({
           ...DEFAULT_VR_OVERLAY_SETTINGS,
           width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
@@ -230,7 +230,6 @@ function moveSelected(dx: number, dy: number, dz: number): void {
     notifyRenderer();
   }
 }
-(moveSelected as any)._zTimer = undefined as NodeJS.Timeout | undefined;
 
 export function updateVrDashboard(dashboard: DashboardLayout): void {
   currentDashboard = dashboard;
@@ -300,16 +299,16 @@ export function startVrOverlay(
   overlayManagerRef = overlayManager;
   overlayManager.suppressDesktopOverlays();
 
-// Create the OSR window at the primary display size. Chromium OSR caps the
-// framebuffer to the display resolution, so a larger window is wasted.
-const { width: displayW, height: displayH } = screen.getPrimaryDisplay().size;
-const texW = displayW;
-const texH = displayH;
-const zoomFactor = 1;
+  // Create the OSR window at the primary display size. Chromium OSR caps the
+  // framebuffer to the display resolution, so a larger window is wasted.
+  const { width: displayW, height: displayH } = screen.getPrimaryDisplay().size;
+  const texW = displayW;
+  const texH = displayH;
+  const zoomFactor = 1;
 
-quadAspect = texH / texW;
-atlasTexW = texW;
-atlasTexH = texH;
+  quadAspect = texH / texW;
+  atlasTexW = texW;
+  atlasTexH = texH;
   const pose = poseFromSettings(settings);
   currentVrPose = pose;
 

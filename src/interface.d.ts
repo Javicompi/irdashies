@@ -26,10 +26,5 @@ declare global {
     vrAtlasBridge?: {
       reportLayout: (layers: { widgetId: string; sourceRect: [number, number, number, number] }[]) => void;
     };
-    vrEditBridge?: {
-      onEditMode: (cb: (active: boolean, id: string, pos: number[]) => () => void) => () => void;
-      onSelect: (cb: (id: string, pos: number[]) => () => void) => () => void;
-      onMove: (cb: (pos: number[]) => () => void) => () => void;
-    };
   }
 }
