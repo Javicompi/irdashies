@@ -65,17 +65,35 @@ Key design decisions:
 
 ## What's pending
 
-1. **Centering / left-right balance.** Widgets currently shelf-pack with a
-   200px left margin. The user reports more free space to the right than left.
-   Fine-tuning the initial placement (or adding per-session position memory
-   that doesn't reset on re-entry) is a follow-up.
+1. **Centering / left-right balance.** Widgets shelf-pack with a 200px left
+   margin. The user reports more free space to the right than left. Fine-tuning
+   the initial placement is a follow-up.
 2. **Per-widget Z.** The shared Z covers the MVP but per-widget depth was the
    original goal. Requires fixing the multi-quad consumer freeze first.
 3. **Settings UI for `vrEnabled`.** The `vrEnabled` flag on `DashboardWidget`
    exists but has no toggle in the settings UI. All enabled widgets appear in
    VR by default (unchanged from before edit mode).
-4. **Position persistence across app restarts.** Positions save to disk but
-   the renderer ignores saved `vrAtlasX`/`vrAtlasY` on next load (always
-   re-centers). This is intentional for the MVP — the centering logic
-   conflicts with saved positions. A proper solution would track which
-   positions were user-placed vs auto-packed.
+4. **`vrEditBridge` still in preload.** The `contextBridge.exposeInMainWorld`
+   code for `vrEditBridge` was kept in `rendererExpose.ts` (wrapped in
+   try-catch) but is unused — the actual communication uses
+   `executeJavaScript` + `CustomEvent`. Clean up the dead code in a follow-up.
+
+## Bugs fixed during implementation
+
+- **F9 captured by iRacing.** Changed shortcut to `Ctrl+Shift+F9`. iRacing
+  captures bare F9 at DirectInput level before `globalShortcut` can see it.
+- **`vrEditBridge` silent failure.** `contextBridge.exposeInMainWorld` with
+  `ipcRenderer.on` callbacks failed to expose the API. Replaced with
+  `webContents.executeJavaScript` + `CustomEvent` (`vr-edit-state`).
+- **Z sign inversion.** `liveEditZ` had a double-negation that put the overlay
+  behind the user on exit. Fixed by storing the raw negative Z coordinate.
+- **`publishVrLayers` spam on arrow keys.** Each atlas layout report triggered
+  a republish. Removed the call from the `vr-atlas-layout` IPC handler.
+- **Hide/show not working in VR.** `VrAtlasApp` was missing `<HideUIWrapper>`.
+  Added to match `OverlayApp`.
+- **Positions lost on restart.** The renderer ignored saved `vrAtlasX`/`vrAtlasY`.
+  Restored the check; saved positions now persist across sessions and hide/show
+  toggles.
+- **Vite build using stale cache.** A syntax error (extra brace) prevented
+  recompilation across several iterations. Fixed after clearing `.vite` and
+  `out` directories.
