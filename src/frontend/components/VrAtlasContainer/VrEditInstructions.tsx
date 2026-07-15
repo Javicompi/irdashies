@@ -13,8 +13,6 @@ export const VrEditInstructions = memo(() => {
     return () => window.removeEventListener('vr-edit-state', handler);
   }, []);
 
-  const fmt = (n: number) => n.toFixed(2);
-
   return (
     <div
       className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[9999]
