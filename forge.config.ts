@@ -10,7 +10,11 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: path.resolve(__dirname, 'docs/assets/icons/logo'),
-    extraResource: [path.resolve(__dirname, 'docs/assets/icons')],
+    extraResource: [
+      path.resolve(__dirname, 'docs/assets/icons'),
+      path.resolve(__dirname, 'native', 'openxr-layer', 'build', 'Release', 'irDashies-OpenXR-Layer.dll'),
+      path.resolve(__dirname, 'scripts', 'register-openxr.ps1'),
+    ],
   },
   rebuildConfig: {
     force: true,
