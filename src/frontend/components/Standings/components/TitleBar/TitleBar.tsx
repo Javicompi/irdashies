@@ -1,6 +1,6 @@
 import {
   useCurrentSessionType,
-  useTotalRaceLaps,
+  useTotalRaceValue,
   useTelemetryValue,
   useWeekendInfoSeriesID,
 } from '@irdashies/context';
@@ -24,7 +24,7 @@ export const TitleBar = ({ titleBarSettings }: TitleBarProps) => {
     : sessionType || 'Unknown Session';
 
   const { state: sessionState, currentLap } = useSessionLapCount();
-  const { totalRaceLaps } = useTotalRaceLaps();
+  const { totalRaceLaps } = useTotalRaceValue();
   const lapDistPct = useTelemetryValue('LapDistPct');
 
   // Get highlight color from dashboard settings
