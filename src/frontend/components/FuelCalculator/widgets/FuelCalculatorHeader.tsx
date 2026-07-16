@@ -79,11 +79,12 @@ export const FuelCalculatorHeader: React.FC<FuelCalculatorWidgetProps> = ({
   const confConfig = getConfidenceConfig(confidence);
 
   // Format laps remaining for confidence pill
-  let lapsText = `${Math.ceil(fuelData.lapsRemaining)} LAPS`;
+  const remaining = fuelData.lapsRemaining;
+  let lapsText = `${remaining.toFixed(1)} LAPS`;
   if (confidence === 'medium')
-    lapsText = `~${Math.ceil(fuelData.lapsRemaining)} LAPS`;
+    lapsText = `~${Math.ceil(remaining)} LAPS`;
   if (confidence === 'low' || confidence === 'very-low')
-    lapsText = `${Math.floor(fuelData.lapsRemaining)}-${Math.ceil(fuelData.lapsRemaining + 2)} LAPS`;
+    lapsText = `${Math.floor(remaining)}-${Math.ceil(remaining + 2)} LAPS`;
 
   // If no data (avgLaps is 0), show --
   if ((fuelData.avgLaps || 0) <= 0) {
