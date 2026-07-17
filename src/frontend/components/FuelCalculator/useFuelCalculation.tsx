@@ -1061,7 +1061,7 @@ export function useFuelCalculation(
         );
       }
     } else if (sessionLapsRemain === TIMED_RACE_LAPS_REMAINING) {
-      // Use centralized useTotalRaceLaps hook for timed race calculations
+      // Use centralized useTotalRaceValue hook for timed race calculations
       if (calculatedTotalRaceLaps > 0) {
         // Use the hook's result directly
         totalLaps = Math.ceil(calculatedTotalRaceLaps);
@@ -1075,7 +1075,7 @@ export function useFuelCalculation(
 
         if (DEBUG_LOGGING) {
           logger.info(
-            `[FuelCalculator] Timed race (via useTotalRaceLaps): totalLaps=${totalLaps}, lapsRemaining=${lapsRemaining.toFixed(2)}, refuel=${lapsRemainingRefuel.toFixed(2)}`
+            `[FuelCalculator] Timed race (via useTotalRaceValue): totalLaps=${totalLaps}, lapsRemaining=${lapsRemaining.toFixed(2)}, refuel=${lapsRemainingRefuel.toFixed(2)}`
           );
         }
       } else if (sessionTimeRemain !== undefined && sessionTimeRemain > 0) {

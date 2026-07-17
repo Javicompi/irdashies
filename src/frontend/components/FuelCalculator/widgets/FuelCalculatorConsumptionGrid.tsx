@@ -2,7 +2,7 @@ import React from 'react';
 import {
   useTelemetryValue,
   useSessionStore,
-  useTotalRaceLaps,
+  useTotalRaceValue,
 } from '@irdashies/context';
 import { useStore } from 'zustand';
 import type { FuelCalculation, FuelCalculatorSettings } from '../types';
@@ -53,7 +53,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
   );
 
   // Use shared hook for total race laps (handles timed races and leader lapping)
-  const { totalRaceLaps } = useTotalRaceLaps();
+  const { totalRaceLaps } = useTotalRaceValue();
 
   // Custom style handling for separate label/value sizes
   const widgetStyle =
