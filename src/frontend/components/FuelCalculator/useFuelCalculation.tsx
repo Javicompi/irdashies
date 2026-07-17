@@ -1101,25 +1101,25 @@ export function useFuelCalculation(
           let futureLapsRefuel = 0;
 
           if (timeAtLine < -TIME_PADDING_SECONDS) {
-            lapsRemaining = 1;
+            lapsRemaining = pctRemainingInLap;
             futureLaps = 0;
           } else {
             futureLaps = Math.ceil(
               (timeAtLine + TIME_PADDING_SECONDS) / projectionLapTime
             );
             futureLaps = Math.max(0, futureLaps);
-            lapsRemaining = 1 + futureLaps;
+            lapsRemaining = pctRemainingInLap + futureLaps;
           }
           totalLaps = lap + futureLaps;
 
           if (timeAtLine < -TIME_PADDING_REFUEL) {
-            lapsRemainingRefuel = 1;
+            lapsRemainingRefuel = pctRemainingInLap;
           } else {
             futureLapsRefuel = Math.ceil(
               (timeAtLine + TIME_PADDING_REFUEL) / projectionLapTime
             );
             futureLapsRefuel = Math.max(0, futureLapsRefuel);
-            lapsRemainingRefuel = 1 + futureLapsRefuel;
+            lapsRemainingRefuel = pctRemainingInLap + futureLapsRefuel;
           }
         } else {
           const estimatedLapsFromFuel =
