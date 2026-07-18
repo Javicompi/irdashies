@@ -137,7 +137,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
       return {
         laps: NaN,
         refuel: 0,
-        atEnd: 0,
+        totalReq: 0,
         isDeficit: false,
         isValid: false,
         hideRefuel: true,
@@ -146,22 +146,28 @@ export const FuelCalculatorConsumptionGrid: React.FC<
     // Laps calculation
     const laps = contextFuelLevel / usage;
 
-    // Fuel at end: current fuel minus what's needed to finish
+    // Total Required for Race (Distance * Usage)
+    // We use contextTotalLaps which might be live or frozen depending on the row
+    const totalReq = contextTotalLaps * usage;
+
+    // Finish (Fuel at finish) -> This is effectively our BALANCE for coloring
+    // Formula: CurrentFuel - FuelNeeded
+    // FuelNeeded = LapsRemaining * Usage
     const fuelNeeded = contextLapsRemaining * usage;
-    const atEnd = contextFuelLevel - fuelNeeded;
+    const balance = contextFuelLevel - fuelNeeded;
 
     // Logic for Refuel Column:
-    // If atEnd < 0 (Deficit): Show POSITIVE amount to ADD.
-    // If atEnd >= 0 (Surplus): Show POSITIVE amount EXTRA.
-    const refuelValue = atEnd < 0 ? Math.abs(atEnd) : atEnd;
-    const isDeficit = atEnd < 0;
+    // If Balance < 0 (Deficit): Show POSITIVE amount to ADD.
+    // If Balance >= 0 (Surplus): Show POSITIVE amount EXTRA.
+    const refuelValue = balance < 0 ? Math.abs(balance) : balance;
+    const isDeficit = balance < 0;
 
-    // If testing, hide Refuel and AT END (return 0/invalid)
+    // If testing, hide Refuel and Finish (return 0/invalid)
     if (isTesting) {
       return {
         laps: laps,
         refuel: 0,
-        atEnd: 0,
+        totalReq: 0,
         isDeficit: false,
         isValid: true,
         hideRefuel: true,
@@ -171,7 +177,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
     return {
       laps: laps, // number
       refuel: refuelValue, // number (absolute value to show)
-      atEnd: atEnd, // number (fuel at race end)
+      totalReq: totalReq, // number
       isDeficit: isDeficit, // boolean
       isValid: true,
       hideRefuel: false,
@@ -310,7 +316,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
           className={`font-bold text-slate-400 flex flex-col justify-center items-center leading-none ${compactMode === 'ultra' ? 'px-1 py-0' : compactMode === 'compact' ? 'px-1 py-1' : 'px-1 py-2'}`}
           style={{ fontSize: labelFontSize }}
         >
-          AT END
+          TOTAL
         </div>
       </div>
 
@@ -358,7 +364,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding} opacity-90`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {fmt(currentData.atEnd, true)}
+                    {fmt(currentData.totalReq, true)}
                   </div>
                 </div>
               );
@@ -396,7 +402,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding}`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {fmt(avgData.atEnd, true)}
+                    {fmt(avgData.totalReq, true)}
                   </div>
                 </div>
               );
@@ -434,7 +440,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding}`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {fmt(maxData.atEnd, true)}
+                    {fmt(maxData.totalReq, true)}
                   </div>
                 </div>
               );
@@ -471,7 +477,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding}`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {fmt(lastData.atEnd, true)}
+                    {fmt(lastData.totalReq, true)}
                   </div>
                 </div>
               );
@@ -508,7 +514,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding}`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {fmt(minData.atEnd, true)}
+                    {fmt(minData.totalReq, true)}
                   </div>
                 </div>
               );
@@ -551,7 +557,7 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     className={`text-white text-center ${rowPadding}`}
                     style={{ fontSize: valueFontSize }}
                   >
-                    {isRace && qual > 0 ? fmt(qualData.atEnd, true) : '--'}
+                    {isRace && qual > 0 ? fmt(qualData.totalReq, true) : '--'}
                   </div>
                 </div>
               );
