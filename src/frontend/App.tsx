@@ -91,6 +91,8 @@ const App = () => {
           <RunningStateProvider bridge={window.irsdkBridge}>
             <SessionProvider bridge={window.irsdkBridge} />
             <TelemetryProvider bridge={window.irsdkBridge} />
+            <PitLaneProvider bridge={window.pitLaneBridge} />
+            <ReferenceStoreProvider bridge={window.referenceLapsBridge} />
             <VrAtlasApp />
           </RunningStateProvider>
         </DashboardProvider>

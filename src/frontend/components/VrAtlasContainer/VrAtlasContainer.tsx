@@ -4,6 +4,8 @@ import { getWidget } from '../../WidgetIndex';
 import { WidgetContainer } from '../WidgetContainer';
 import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
 import { VrEditInstructions } from './VrEditInstructions';
+import { PitLapUpdater } from '../OverlayContainer/PitLapUpdater';
+import { PushToPassUpdater } from '../OverlayContainer/PushToPassUpdater';
 
 const noop = () => {
   // VR atlas widgets are not draggable; no-op for the required prop.
@@ -113,6 +115,8 @@ const slots = useMemo<AtlasSlot[]>(() => {
 
   return (
     <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <PitLapUpdater />
+      <PushToPassUpdater />
       {slots.map((slot, index) => {
         const widget = vrWidgets.find((w) => w.id === slot.widgetId);
         if (!widget) return null;
