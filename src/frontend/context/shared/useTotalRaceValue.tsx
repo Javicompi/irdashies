@@ -106,12 +106,19 @@ export const useTotalRaceValue = () => {
                     (leaderLap - 1) +
                     (leaderLapDistPct ?? 0);
 
-                // Remove laps if not on the same lap as the leader
-                const totalDist = lap;
-                const totalLeaderDist = leaderLap;
+                // Remove laps when the leader has physically lapped the player.
+                // Use lap distance (lap + lapDistPct) instead of raw CarIdxLap to
+                // avoid false positives when the leader has just crossed S/F and
+                // their CarIdxLap incremented without a full lap advantage yet.
+                // Only subtract whole laps once the real distance advantage is >= 1.
+                // This matters in multi-class where the faster class stably leads
+                // by exactly +1 CarIdxLap for long stretches of the race.
+                const totalDist = lap + (lapDistPct ?? 0);
+                const totalLeaderDist = leaderLap + (leaderLapDistPct ?? 0);
+                const leaderAdvantage = totalLeaderDist - totalDist;
 
-                if (leaderLap > lap + 1) {
-                    result.totalRaceLaps -= Math.floor(totalLeaderDist - totalDist);
+                if (leaderAdvantage >= 1.0) {
+                    result.totalRaceLaps -= Math.floor(leaderAdvantage);
                 }
             }
         }
