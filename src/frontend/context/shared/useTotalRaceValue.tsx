@@ -55,11 +55,8 @@ export const useTotalRaceValue = () => {
                 ? classEstLapTimes?.[leaderLapTimeIdx]
                 : (bestLapTime ?? 0);
 
-    // Lap time for estimating the player's total laps in timed races: use the
-    // player's own pace, since we want to know how many laps the player will
-    // complete, not the leader. In multi-class the leader is faster and would
-    // overestimate the player's lap count. Fallbacks: class estimated lap time
-    // (e.g. race start without qualifying), then best lap time.
+    // Lap time for estimating the player's total laps in timed races.
+    // Fallbacks: class estimated lap time, then best lap time.
     const playerAvgLapTime =
         (avgLapTimes[carIdx] > 0)
             ? avgLapTimes[carIdx]
@@ -102,27 +99,16 @@ export const useTotalRaceValue = () => {
             }
         }
     } else {
-        // Time-limited race: estimate how many laps the player will complete.
-        // Use the player's own pace — the number of laps the player drives
-        // depends on their lap time, not the leader's. In multi-class the
-        // leader is faster and would overestimate the player's laps by the
-        // advantage they will build in the remaining time.
-        // In replays, the average lap time is reported as 1s, which is
-        // obviously invalid, so we skip the estimation in this case.
+        // Time-limited race: estimate based on when the leader will receive the checkered flag.
+        // 1. ceil(timeTotal / leaderAvgLapTime) = laps the leader will complete
+        // 2. effective race duration = leaderEstimatedLaps * leaderAvgLapTime
+        // 3. playerTotalLaps = effectiveRaceTime / playerAvgLapTime (rounded to 1dp)
         result.totalRaceTime = timeTotal;
 
-        if (playerAvgLapTime !== undefined && playerAvgLapTime > 0) {
-            if (lap === 0) {
-                // Race has not yet started
-                result.totalRaceLaps = timeTotal / playerAvgLapTime;
-            } else {
-                // Race has started: remaining laps based on player's pace
-                // plus completed laps and current lap progress
-                result.totalRaceLaps =
-                    timeRemaining / playerAvgLapTime +
-                    (lap - 1) +
-                    (lapDistPct ?? 0);
-            }
+        if (timeTotal > 0 && leaderAvgLapTime > 1 && playerAvgLapTime > 1) {
+            const leaderEstimatedLaps = Math.ceil(timeTotal / leaderAvgLapTime);
+            const effectiveRaceTime = leaderEstimatedLaps * leaderAvgLapTime;
+            result.totalRaceLaps = Math.round((effectiveRaceTime / playerAvgLapTime) * 10) / 10;
         }
 
         if ((totalLaps ?? 0) > 0 && result.totalRaceLaps > totalLaps) {

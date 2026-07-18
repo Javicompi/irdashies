@@ -92,10 +92,10 @@ describe('useTotalRaceValue', () => {
     vi.clearAllMocks();
   });
 
-  describe('timed race (time-limited, player pace)', () => {
-    // Timed races estimate the player's total laps using the PLAYER's pace,
-    // not the leader's. This is critical in multi-class where the leader is
-    // faster and would overestimate the player's lap count.
+  describe('timed race (time-limited, leader checkered-flag estimate)', () => {
+    // Timed races estimate the player's total laps based on when the global
+    // leader will receive the checkered flag, using the player's own pace.
+    // Formula: ceil(timeTotal / leaderPace) * leaderPace / playerPace
     const baseScenario: Scenario = {
       lap: 14,
       lapDistPct: 0.5,
@@ -108,109 +108,133 @@ describe('useTotalRaceValue', () => {
       sessionLaps: 32767, // iRacing sentinel for "unlimited" (timed race)
     };
 
-    it('multi-class: uses player pace, not leader pace', () => {
-      // Player on lap 14 at 50%, 300s remaining, player pace 120s.
-      // totalRaceLaps = 300/120 + (14-1) + 0.5 = 2.5 + 13.5 = 16.0
-      // If leader pace (105) were used: 300/105 + (15-1) + 0.5 = 17.357 (wrong)
+    it('estimates total laps from leader and player average pace', () => {
+      // leader: ceil(1800/105)=18, raceDuration=18*105=1890
+      // player: 1890/120=15.75 → Math.round(157.5)/10=15.8
       applyScenario(baseScenario);
       const { result } = renderHook(() => useTotalRaceValue());
-      expect(result.current.totalRaceLaps).toBeCloseTo(16.0, 2);
+      expect(result.current.totalRaceLaps).toBe(15.8);
     });
 
-    it('multi-class: does NOT subtract leader advantage (player pace already correct)', () => {
-      // Leader is +5 laps ahead. With player pace, this is irrelevant —
-      // the player will complete laps based on their own speed.
+    it('same class with identical paces returns exact division', () => {
+      // timeTotal=1800, leader=120, player=120: ceil(1800/120)=15, 15*120/120=15.0
       applyScenario({
         ...baseScenario,
-        leaderLap: 19,
-        leaderLapDistPct: 0.5, // leader +5 laps
+        avgLapTimeLeader: 120,
+        avgLapTimePlayer: 120,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // Same as base: 300/120 + 13 + 0.5 = 16.0
-      expect(result.current.totalRaceLaps).toBeCloseTo(16.0, 2);
+      expect(result.current.totalRaceLaps).toBe(15.0);
     });
 
-    it('single-class: player pace equals leader pace, same result', () => {
+    it('rounds up leader laps with ceil, extending race beyond timeTotal', () => {
+      // timeTotal=1700, leader 105: 1700/105=16.19, ceil=17, eff=17*105=1785
+      // player 120: 1785/120=14.875 → Math.round(148.75)/10=14.9
       applyScenario({
         ...baseScenario,
-        avgLapTimeLeader: 120, // same as player
-        leaderLap: 14, // same lap as player
-        leaderLapDistPct: 0.5,
+        sessionTimeTotal: 1700,
+        sessionTimeRemain: 200,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // 300/120 + 13 + 0.5 = 16.0
-      expect(result.current.totalRaceLaps).toBeCloseTo(16.0, 2);
+      expect(result.current.totalRaceLaps).toBeCloseTo(14.9, 1);
     });
 
-    it('includes current lap progress via lapDistPct', () => {
+    it('produces stable estimate independent of current lap progress', () => {
+      // Changing lap/progress should not affect the forward-looking estimate
       applyScenario({
         ...baseScenario,
-        lap: 14,
-        lapDistPct: 0.9, // 90% of current lap completed
+        lap: 8,
+        lapDistPct: 0.2,
+        leaderLap: 8,
+        leaderLapDistPct: 0.8,
+        sessionTimeRemain: 1500,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // 300/120 + 13 + 0.9 = 16.4
-      expect(result.current.totalRaceLaps).toBeCloseTo(16.4, 2);
+      expect(result.current.totalRaceLaps).toBe(15.8);
     });
 
-    it('handles lap 0 (race not yet started) with player pace', () => {
+    it('rounds to 1 decimal place', () => {
+      // leader 90, player 97: ceil(1800/90)=20, eff=1800, 1800/97=18.5567 → 18.6
       applyScenario({
         ...baseScenario,
-        lap: 0,
-        lapDistPct: 0,
+        avgLapTimeLeader: 90,
+        avgLapTimePlayer: 97,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // timeTotal / playerPace = 1800/120 = 15.0
-      expect(result.current.totalRaceLaps).toBeCloseTo(15.0, 2);
+      expect(result.current.totalRaceLaps).toBe(18.6);
     });
 
     it('falls back to class estimated lap time when no avg lap time', () => {
-      applyScenario(baseScenario); // set up base mocks first
+      applyScenario(baseScenario);
 
       const classEstLapTimes: Record<number, number> = {};
-      classEstLapTimes[PLAYER_CAR_IDX] = 125; // class est for player
+      classEstLapTimes[PLAYER_CAR_IDX] = 125;
 
-      vi.mocked(useCarIdxClassEstLapTime).mockReturnValue(classEstLapTimes as never);
+      vi.mocked(useCarIdxClassEstLapTime).mockReturnValue(
+        classEstLapTimes as never,
+      );
       vi.mocked(useCarIdxAverageLapTime).mockReturnValue([
-        0, // no avg lap time for player
+        0,
         baseScenario.avgLapTimeLeader,
       ]);
 
       const { result } = renderHook(() => useTotalRaceValue());
-      // 300/125 + 13 + 0.5 = 2.4 + 13.5 = 15.9
-      expect(result.current.totalRaceLaps).toBeCloseTo(15.9, 2);
+      // leader: ceil(1800/105)=18, eff=1890, player fallback: 1890/125=15.12 → 15.1
+      expect(result.current.totalRaceLaps).toBe(15.1);
     });
 
     it('falls back to best lap time when no avg and no class est', () => {
-      applyScenario(baseScenario); // set up base mocks first
+      applyScenario(baseScenario);
 
       const playerBestLapTime = 118;
 
       vi.mocked(useCarIdxClassEstLapTime).mockReturnValue({} as never);
       vi.mocked(useCarIdxAverageLapTime).mockReturnValue([
-        0, // no avg lap time for player
+        0,
         baseScenario.avgLapTimeLeader,
       ]);
-      // Override CarIdxBestLapTime to provide player's best
       vi.mocked(useTelemetryValues).mockImplementation((key: string) => {
-        if (key === 'CarIdxLap') return [baseScenario.lap, baseScenario.leaderLap];
+        if (key === 'CarIdxLap')
+          return [baseScenario.lap, baseScenario.leaderLap];
         if (key === 'CarIdxPosition') return [2, 1];
-        if (key === 'CarIdxBestLapTime') return [playerBestLapTime, -1];
+        if (key === 'CarIdxBestLapTime')
+          return [playerBestLapTime, -1];
         return undefined as never;
       });
 
       const { result } = renderHook(() => useTotalRaceValue());
-      // 300/118 + 13 + 0.5 = 2.542 + 13.5 = 16.042
-      expect(result.current.totalRaceLaps).toBeCloseTo(16.04, 1);
+      // leader: ceil(1800/105)=18, eff=1890, player best: 1890/118=16.0169 → 16.0
+      expect(result.current.totalRaceLaps).toBe(16.0);
+    });
+
+    it('returns 0 when leader lap time is invalid (replay)', () => {
+      applyScenario({
+        ...baseScenario,
+        avgLapTimeLeader: 1,
+        avgLapTimePlayer: 120,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.totalRaceLaps).toBe(0);
+    });
+
+    it('returns 0 when player lap time is invalid', () => {
+      applyScenario({
+        ...baseScenario,
+        avgLapTimeLeader: 105,
+        avgLapTimePlayer: 1,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.totalRaceLaps).toBe(0);
     });
 
     it('returns 0 when no lap time data available', () => {
-      applyScenario(baseScenario); // set up base mocks first
+      applyScenario(baseScenario);
 
       vi.mocked(useCarIdxClassEstLapTime).mockReturnValue({} as never);
       vi.mocked(useCarIdxAverageLapTime).mockReturnValue([0, 0]);
       vi.mocked(useTelemetryValues).mockImplementation((key: string) => {
-        if (key === 'CarIdxLap') return [baseScenario.lap, baseScenario.leaderLap];
+        if (key === 'CarIdxLap')
+          return [baseScenario.lap, baseScenario.leaderLap];
         if (key === 'CarIdxPosition') return [2, 1];
         if (key === 'CarIdxBestLapTime') return [-1, -1];
         return undefined as never;
@@ -222,8 +246,6 @@ describe('useTotalRaceValue', () => {
   });
 
   describe('fixed-lap race', () => {
-    // The fix is in the timed-race branch; fixed-lap races use a separate
-    // calculation that already accounted for lapDistPct. Verify no regression.
     const fixedScenario: Scenario = {
       lap: 14,
       lapDistPct: 0.5,
@@ -245,7 +267,7 @@ describe('useTotalRaceValue', () => {
       expect(total).toBe(19);
     });
 
-    it('does not subtract when leader is not a full lap ahead in fixed-lap race', () => {
+    it('does not subtract when leader is not a full lap ahead', () => {
       applyScenario({
         ...fixedScenario,
         lap: 14,
