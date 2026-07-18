@@ -45,15 +45,26 @@ export const useTotalRaceValue = () => {
             break;
         }
     }
-    // When no leader found yet (pre-race), fall back to player's carIdx for lap time lookup
-    const lapTimeCarIdx = leaderCarIdx >= 0 ? leaderCarIdx : carIdx;
-    // Use P1's average lap time, falling back to class estimated lap time if no laps recorded yet
-    // Use best lap time as last resort
-    const avgLapTime =
-        (avgLapTimes[lapTimeCarIdx] > 0)
-            ? avgLapTimes[lapTimeCarIdx]
-            : (classEstLapTimes?.[lapTimeCarIdx] ?? 0) > 0 && classEstLapTimes?.[lapTimeCarIdx] !== undefined
-                ? classEstLapTimes?.[lapTimeCarIdx]
+    // Lap time for the race clock in fixed-lap races: use the leader's pace,
+    // since the race ends when the leader completes the total laps.
+    const leaderLapTimeIdx = leaderCarIdx >= 0 ? leaderCarIdx : carIdx;
+    const leaderAvgLapTime =
+        (avgLapTimes[leaderLapTimeIdx] > 0)
+            ? avgLapTimes[leaderLapTimeIdx]
+            : (classEstLapTimes?.[leaderLapTimeIdx] ?? 0) > 0 && classEstLapTimes?.[leaderLapTimeIdx] !== undefined
+                ? classEstLapTimes?.[leaderLapTimeIdx]
+                : (bestLapTime ?? 0);
+
+    // Lap time for estimating the player's total laps in timed races: use the
+    // player's own pace, since we want to know how many laps the player will
+    // complete, not the leader. In multi-class the leader is faster and would
+    // overestimate the player's lap count. Fallbacks: class estimated lap time
+    // (e.g. race start without qualifying), then best lap time.
+    const playerAvgLapTime =
+        (avgLapTimes[carIdx] > 0)
+            ? avgLapTimes[carIdx]
+            : (classEstLapTimes?.[carIdx] ?? 0) > 0 && classEstLapTimes?.[carIdx] !== undefined
+                ? classEstLapTimes?.[carIdx]
                 : (bestLapTime ?? 0);
 
 
@@ -76,8 +87,9 @@ export const useTotalRaceValue = () => {
             }
         }
 
-        if (avgLapTime > 0) {
-            result.totalRaceTime = totalLaps * avgLapTime;
+        // Race clock: based on leader's pace (race ends when leader finishes)
+        if (leaderAvgLapTime > 0) {
+            result.totalRaceTime = totalLaps * leaderAvgLapTime;
             result.adjustedRaceTime = result.totalRaceTime;
 
             if (lapsValid) {
@@ -85,41 +97,31 @@ export const useTotalRaceValue = () => {
                 const totalLeaderDist = leaderLap + leaderLapDistPct;
                 if (totalLeaderDist > totalDist) {
                     result.adjustedRaceTime =
-                        (totalLaps - Math.floor(totalLeaderDist - totalDist)) * avgLapTime;
+                        (totalLaps - Math.floor(totalLeaderDist - totalDist)) * leaderAvgLapTime;
                 }
             }
         }
     } else {
-        // Time-limited race, so we have to estimate based on remaining time and expected laptimes
-        // In replays, the average lap time is reported as 1s, which is obviously invalid, so we skip
-        // the estimation in this case
+        // Time-limited race: estimate how many laps the player will complete.
+        // Use the player's own pace — the number of laps the player drives
+        // depends on their lap time, not the leader's. In multi-class the
+        // leader is faster and would overestimate the player's laps by the
+        // advantage they will build in the remaining time.
+        // In replays, the average lap time is reported as 1s, which is
+        // obviously invalid, so we skip the estimation in this case.
         result.totalRaceTime = timeTotal;
 
-        if (avgLapTime !== undefined) {
+        if (playerAvgLapTime !== undefined && playerAvgLapTime > 0) {
             if (lap === 0) {
                 // Race has not yet started
-                result.totalRaceLaps = timeTotal / avgLapTime;
+                result.totalRaceLaps = timeTotal / playerAvgLapTime;
             } else {
-                // Race has started, so we have to add the number of completed laps and the percentage of the current lap
+                // Race has started: remaining laps based on player's pace
+                // plus completed laps and current lap progress
                 result.totalRaceLaps =
-                    timeRemaining / avgLapTime +
-                    (leaderLap - 1) +
-                    (leaderLapDistPct ?? 0);
-
-                // Remove laps when the leader has physically lapped the player.
-                // Use lap distance (lap + lapDistPct) instead of raw CarIdxLap to
-                // avoid false positives when the leader has just crossed S/F and
-                // their CarIdxLap incremented without a full lap advantage yet.
-                // Only subtract whole laps once the real distance advantage is >= 1.
-                // This matters in multi-class where the faster class stably leads
-                // by exactly +1 CarIdxLap for long stretches of the race.
-                const totalDist = lap + (lapDistPct ?? 0);
-                const totalLeaderDist = leaderLap + (leaderLapDistPct ?? 0);
-                const leaderAdvantage = totalLeaderDist - totalDist;
-
-                if (leaderAdvantage >= 1.0) {
-                    result.totalRaceLaps -= Math.floor(leaderAdvantage);
-                }
+                    timeRemaining / playerAvgLapTime +
+                    (lap - 1) +
+                    (lapDistPct ?? 0);
             }
         }
 
