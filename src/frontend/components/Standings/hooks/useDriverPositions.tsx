@@ -11,7 +11,6 @@ import {
   usePrevCarTrackSurface,
   useFocusCarIdx,
   useSessionPositions,
-  useSessionFastestLaps,
   useTelemetryValuesRounded,
 } from '@irdashies/context';
 
@@ -168,8 +167,6 @@ export const useDriverStandings = () => {
   const sessionState = useTelemetryValue('SessionState') ?? 0;
   const sessionNum = useTelemetryValue('SessionNum');
   const sessionPositions = useSessionPositions(sessionNum);
-  const sessionFastestLaps = useSessionFastestLaps(sessionNum);
-  const fastestLapCarIdx = sessionFastestLaps?.[0]?.CarIdx;
   const isOfficial = useSessionIsOfficial();
 
   const driverStandings: Standings[] = useMemo(() => {
@@ -187,6 +184,9 @@ export const useDriverStandings = () => {
       qualifyingPositions && Array.isArray(qualifyingPositions)
         ? new Map(qualifyingPositions.map((q) => [q.CarIdx, q]))
         : new Map();
+    const driversByCarIdx = new Map(
+      drivers.map((d) => [d.carIdx, d])
+    );
 
     const playerLap =
       playerCarIdx !== undefined
@@ -196,6 +196,32 @@ export const useDriverStandings = () => {
       playerCarIdx !== undefined
         ? (driverPositionsByCarIdx.get(playerCarIdx)?.lapDstPct ?? 0)
         : 0;
+
+    const classFastestTimeMap = new Map<number, number>();
+    for (const pos of driverPositions) {
+      if (!pos.bestLap || pos.bestLap <= 0) continue;
+      const d = driversByCarIdx.get(pos.carIdx);
+      if (!d) continue;
+      const classId = d.carClass.id;
+      const current = classFastestTimeMap.get(classId);
+      if (current === undefined || pos.bestLap < current) {
+        classFastestTimeMap.set(classId, pos.bestLap);
+      }
+    }
+
+    const classFastestCarIdxMap = new Map<number, number>();
+    for (const pos of driverPositions) {
+      if (!pos.bestLap || pos.bestLap <= 0) continue;
+      const d = driversByCarIdx.get(pos.carIdx);
+      if (!d) continue;
+      const classId = d.carClass.id;
+      const classBest = classFastestTimeMap.get(classId);
+      if (pos.bestLap === classBest) {
+        if (!classFastestCarIdxMap.has(classId)) {
+          classFastestCarIdxMap.set(classId, pos.carIdx);
+        }
+      }
+    }
 
     const standings = drivers.map((driver) => {
       const driverPos = driverPositionsByCarIdx.get(driver.carIdx);
@@ -245,8 +271,12 @@ export const useDriverStandings = () => {
         }
       }
 
+      const classFastestCarIdx = classFastestCarIdxMap.get(
+        driver.carClass.id
+      );
       const hasFastestTime =
-        fastestLapCarIdx !== undefined && driver.carIdx === fastestLapCarIdx;
+        classFastestCarIdx !== undefined &&
+        driver.carIdx === classFastestCarIdx;
 
       return {
         carIdx: driver.carIdx,
@@ -314,7 +344,6 @@ export const useDriverStandings = () => {
     useLivePositionStandings,
     radioActiveCarIdxs,
     driverLivePositions,
-    fastestLapCarIdx,
     isOfficial,
   ]);
 
