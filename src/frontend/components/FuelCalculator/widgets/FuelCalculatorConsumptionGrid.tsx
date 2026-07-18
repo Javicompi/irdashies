@@ -315,13 +315,13 @@ export const FuelCalculatorConsumptionGrid: React.FC<
           className={`font-bold text-slate-400 flex flex-col justify-center items-center leading-none ${compactMode === 'ultra' ? 'px-1 py-0' : compactMode === 'compact' ? 'px-1 py-1' : 'px-1 py-2'}`}
           style={{ fontSize: labelFontSize }}
         >
-          REFUEL
+          STINTS
         </div>
         <div
           className={`font-bold text-slate-400 flex flex-col justify-center items-center leading-none ${compactMode === 'ultra' ? 'px-1 py-0' : compactMode === 'compact' ? 'px-1 py-1' : 'px-1 py-2'}`}
           style={{ fontSize: labelFontSize }}
         >
-          STINTS
+          REFUEL
         </div>
       </div>
 
@@ -359,17 +359,17 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(currentData.laps, isFinite(currentData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding} opacity-90`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {fmt(currentData.stints, true)}
+                  </div>
+                  <div
                     className={`${currentData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
                     {!currentData.isDeficit ? '+' : ''}
                     {fmt(currentData.refuel, true)}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding} opacity-90`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {fmt(currentData.stints, true)}
                   </div>
                 </div>
               );
@@ -397,17 +397,17 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(avgData.laps, isFinite(avgData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding}`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {fmt(avgData.stints, true)}
+                  </div>
+                  <div
                     className={`${avgData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
                     {!avgData.isDeficit ? '+' : ''}
                     {fmt(avgData.refuel, true)}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding}`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {fmt(avgData.stints, true)}
                   </div>
                 </div>
               );
@@ -435,17 +435,17 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(maxData.laps, isFinite(maxData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding}`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {fmt(maxData.stints, true)}
+                  </div>
+                  <div
                     className={`${maxData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
                     {!maxData.isDeficit ? '+' : ''}
                     {fmt(maxData.refuel, true)}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding}`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {fmt(maxData.stints, true)}
                   </div>
                 </div>
               );
@@ -472,17 +472,17 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(lastData.laps, isFinite(lastData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding}`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {fmt(lastData.stints, true)}
+                  </div>
+                  <div
                     className={`${lastData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
                     {!lastData.isDeficit ? '+' : ''}
                     {fmt(lastData.refuel, true)}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding}`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {fmt(lastData.stints, true)}
                   </div>
                 </div>
               );
@@ -509,17 +509,17 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(minData.laps, isFinite(minData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding}`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {fmt(minData.stints, true)}
+                  </div>
+                  <div
                     className={`${minData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
                     {!minData.isDeficit ? '+' : ''}
                     {fmt(minData.refuel, true)}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding}`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {fmt(minData.stints, true)}
                   </div>
                 </div>
               );
@@ -546,6 +546,12 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     {fmt(qualData.laps, isFinite(qualData.laps))}
                   </div>
                   <div
+                    className={`text-white text-center ${rowPadding}`}
+                    style={{ fontSize: valueFontSize }}
+                  >
+                    {isRace && qual > 0 ? fmt(qualData.stints, true) : '--'}
+                  </div>
+                  <div
                     className={`${qualData.isDeficit ? 'text-red-500 bg-red-500/10' : 'text-green-400 bg-green-500/10'} text-center ${rowPadding} font-bold rounded`}
                     style={{ fontSize: valueFontSize }}
                   >
@@ -557,12 +563,6 @@ export const FuelCalculatorConsumptionGrid: React.FC<
                     ) : (
                       '--'
                     )}
-                  </div>
-                  <div
-                    className={`text-white text-center ${rowPadding}`}
-                    style={{ fontSize: valueFontSize }}
-                  >
-                    {isRace && qual > 0 ? fmt(qualData.stints, true) : '--'}
                   </div>
                 </div>
               );
