@@ -10,7 +10,7 @@ import { SettingToggleRow } from '../components/SettingToggleRow';
 import { SettingsSection } from '../components/SettingSection';
 import logger from '@irdashies/utils/logger';
 
-type LayerStatus = 'checking' | 'registered' | 'missing';
+type LayerStatus = 'checking' | 'registered' | 'missing' | 'unknown';
 
 export const VrSettings = () => {
   const { currentDashboard, onDashboardUpdated } = useDashboard();
@@ -33,16 +33,23 @@ export const VrSettings = () => {
   });
   const [layerStatus, setLayerStatus] = useState<LayerStatus>('checking');
   const [layerBusy, setLayerBusy] = useState(false);
+  const [layerRequired, setLayerRequired] = useState(false);
 
   const refreshLayerStatus = useCallback(() => {
-    if (!window.openxrBridge) return;
+    if (!window.openxrBridge) {
+      setLayerStatus('unknown');
+      return;
+    }
     setLayerStatus('checking');
     window.openxrBridge
       .checkLayer()
-      .then((registered) => setLayerStatus(registered ? 'registered' : 'missing'))
+      .then((registered) => {
+        if (registered === null) setLayerStatus('unknown');
+        else setLayerStatus(registered ? 'registered' : 'missing');
+      })
       .catch((err) => {
         logger.error('Failed to check OpenXR layer', err);
-        setLayerStatus('missing');
+        setLayerStatus('unknown');
       });
   }, []);
 
@@ -64,6 +71,29 @@ export const VrSettings = () => {
     onDashboardUpdated({ ...currentDashboard, generalSettings });
   };
 
+  const toggleEnabled = async (enabled: boolean) => {
+    if (enabled && window.openxrBridge) {
+      // Do not hide the desktop overlays if the OpenXR layer is not
+      // registered: nothing would be visible in VR. Require registration
+      // first (or a successful check when the status is unverifiable).
+      setLayerBusy(true);
+      try {
+        const registered = await window.openxrBridge.checkLayer();
+        if (registered === false) {
+          setLayerRequired(true);
+          setLayerStatus('missing');
+          return;
+        }
+      } catch (err) {
+        logger.error('Failed to check OpenXR layer before enabling VR', err);
+      } finally {
+        setLayerBusy(false);
+      }
+    }
+    setLayerRequired(false);
+    update({ enabled });
+  };
+
   const runLayerAction = async (action: 'register' | 'unregister') => {
     if (!window.openxrBridge || layerBusy) return;
     setLayerBusy(true);
@@ -73,6 +103,7 @@ export const VrSettings = () => {
         if (ok) {
           logger.info('OpenXR layer registered from Settings');
           setLayerStatus('registered');
+          setLayerRequired(false);
         }
       } else {
         const ok = await window.openxrBridge.unregisterLayer();
@@ -104,8 +135,17 @@ export const VrSettings = () => {
             title="Enable VR overlays"
             description="Shows the overlays in VR via the OpenXR layer and hides the desktop overlay windows."
             enabled={settings.enabled}
-            onToggle={(enabled) => update({ enabled })}
+            onToggle={toggleEnabled}
           />
+
+          {layerRequired && (
+            <div className="flex items-start gap-2 p-3 rounded bg-amber-500/10 border border-amber-500/40 text-amber-300 text-sm">
+              <span>
+                The OpenXR layer is not registered, so nothing would be shown in
+                VR. Register the layer below first, then enable VR overlays.
+              </span>
+            </div>
+          )}
 
           <SettingNumberRow
             title="Width (m)"
@@ -165,14 +205,18 @@ export const VrSettings = () => {
                   ? 'text-green-400'
                   : layerStatus === 'checking'
                     ? 'text-slate-400'
-                    : 'text-amber-400'
+                    : layerStatus === 'missing'
+                      ? 'text-amber-400'
+                      : 'text-slate-400'
               }`}
             >
               {layerStatus === 'registered'
                 ? 'Registered'
                 : layerStatus === 'checking'
                   ? 'Checking...'
-                  : 'Not registered'}
+                  : layerStatus === 'missing'
+                    ? 'Not registered'
+                    : 'Unknown'}
             </span>
           </div>
 

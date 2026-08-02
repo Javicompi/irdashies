@@ -70,10 +70,10 @@ function runPowerShellElevated(script: string, args: string[]): Promise<void> {
   });
 }
 
-async function checkLayer(): Promise<boolean> {
+async function checkLayer(): Promise<boolean | null> {
   const script = getRegisterScriptPath();
   const dll = getLayerDllPath();
-  if (!fs.existsSync(script) || !fs.existsSync(dll)) return false;
+  if (!fs.existsSync(script) || !fs.existsSync(dll)) return null;
 
   return new Promise((resolve) => {
     const child = spawn(
@@ -91,7 +91,7 @@ async function checkLayer(): Promise<boolean> {
       { windowsHide: true }
     );
     child.on('close', (code) => resolve(code === 0));
-    child.on('error', () => resolve(false));
+    child.on('error', () => resolve(null));
   });
 }
 
@@ -100,14 +100,14 @@ async function registerLayer(): Promise<boolean> {
   const dll = getLayerDllPath();
   if (!fs.existsSync(script) || !fs.existsSync(dll)) return false;
   await runPowerShellElevated(script, ['-SourceDll', `"${dll}"`]);
-  return checkLayer();
+  return (await checkLayer()) === true;
 }
 
 async function unregisterLayer(): Promise<boolean> {
   const script = getUnregisterScriptPath();
   if (!fs.existsSync(script)) return false;
   await runPowerShellElevated(script, []);
-  return !(await checkLayer());
+  return (await checkLayer()) === false;
 }
 
 export function setupOpenXRBridge(): void {
