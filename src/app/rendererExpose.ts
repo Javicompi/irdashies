@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   LogBridge,
   LogLevel,
+  OpenXRBridge,
   PitLaneBridge,
   PitLaneTrackData,
 } from '@irdashies/types';
@@ -63,4 +64,12 @@ export function exposeInMainWorld() {
       layers: { widgetId: string; sourceRect: [number, number, number, number] }[]
     ) => ipcRenderer.send('vr-atlas-layout', layers),
   });
+
+  const openxrBridge: OpenXRBridge = {
+    checkLayer: () => ipcRenderer.invoke('openxr:check'),
+    registerLayer: () => ipcRenderer.invoke('openxr:register'),
+    unregisterLayer: () => ipcRenderer.invoke('openxr:unregister'),
+  };
+
+  contextBridge.exposeInMainWorld('openxrBridge', openxrBridge);
 }

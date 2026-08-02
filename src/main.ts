@@ -30,8 +30,10 @@ import {
   flushReferenceLapsOnShutdown,
 } from './app/storage/referenceLaps';
 import { setupChromiumFlagsBridge } from './app/bridge/chromiumFlagsBridge';
+import { setupOpenXRBridge } from './app/bridge/openxrBridge';
 import {
   isVrOverlayEnabled,
+  isVrRunning,
   startVrOverlay,
   stopVrOverlay,
   applyVrOverlaySettings,
@@ -79,6 +81,7 @@ app.on('ready', async () => {
   setupReferenceLapsBridge();
   setupPersonalBestLapTimesBridge();
   setupChromiumFlagsBridge();
+  setupOpenXRBridge();
 
   // Start component server for browser components
   await startComponentServer(bridge, dashboardBridge);
@@ -87,21 +90,32 @@ app.on('ready', async () => {
 
   overlayManager.createOverlays(dashboard);
 
-  // Experimental native VR overlay (opt-in via IRDASHIES_VR=1).
-  if (isVrOverlayEnabled()) {
+  // Experimental native VR overlay (opt-in via IRDASHIES_VR=1 or Settings > VR).
+  if (isVrOverlayEnabled(dashboard?.generalSettings?.vr)) {
     startVrOverlay(overlayManager, dashboard?.generalSettings?.vr);
     updateVrDashboard(dashboard);
-    onDashboardUpdated((updated) => {
-      applyVrOverlaySettings(updated.generalSettings?.vr);
-      updateVrDashboard(updated);
-    });
   }
+
+  // React to Settings > VR changes at runtime: start/stop the overlay when the
+  // enabled toggle changes, and push quad placement updates while running.
+  onDashboardUpdated((updated) => {
+    const vrSettings = updated.generalSettings?.vr;
+    if (vrSettings?.enabled === true && !isVrRunning()) {
+      startVrOverlay(overlayManager, vrSettings);
+      updateVrDashboard(updated);
+      registerVrEditKeys();
+    } else if (vrSettings?.enabled === false && isVrRunning()) {
+      stopVrOverlay();
+    }
+    applyVrOverlaySettings(vrSettings);
+    updateVrDashboard(updated);
+  });
 
   keybindingManager = new KeybindingManager(overlayManager);
   keybindingManager.registerAll();
   // Register F9 for VR edit mode AFTER KeybindingManager so it isn't wiped
   // if registerAll calls unregisterAll internally.
-  if (isVrOverlayEnabled()) registerVrEditKeys();
+  if (isVrOverlayEnabled(dashboard?.generalSettings?.vr)) registerVrEditKeys();
   // Start the WebHID host window that reads game controllers for gamepad bindings.
   keybindingManager.startGamepad();
 
