@@ -1,6 +1,7 @@
 param(
     [string]$SourceDll,
-    [string]$LayerDir = "$env:ProgramFiles\irDashies\openxr-layer"
+    [string]$LayerDir = "$env:ProgramFiles\irDashies\openxr-layer",
+    [switch]$CheckOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,13 +9,16 @@ $dllDest = Join-Path $LayerDir 'irDashies-OpenXR-Layer.dll'
 $jsonDest = Join-Path $LayerDir 'irDashies-OpenXR.json'
 
 # Already registered?
-if ((Test-Path $dllDest) -and (Test-Path $jsonDest)) {
-    $key = 'HKLM:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit'
-    $name = $jsonDest -replace '\\', '\\'
-    if (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue) {
-        Write-Host 'OpenXR layer already registered.'
-        exit 0
-    }
+$key = 'HKLM:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit'
+$name = $jsonDest -replace '\\', '\\'
+if ((Test-Path $dllDest) -and (Test-Path $jsonDest) -and (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue)) {
+    Write-Host 'OpenXR layer already registered.'
+    exit 0
+}
+
+# Check-only mode: report status without making changes (no admin required)
+if ($CheckOnly) {
+    exit 1
 }
 
 if (-not (Test-Path $SourceDll)) {
