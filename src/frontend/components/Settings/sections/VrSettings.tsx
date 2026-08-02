@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useDashboard } from '@irdashies/context';
 import {
   DEFAULT_VR_OVERLAY_SETTINGS,
@@ -6,10 +6,18 @@ import {
   type VrOverlaySettings,
 } from '@irdashies/types';
 import { SettingNumberRow } from '../components/SettingNumberRow';
+import { SettingToggleRow } from '../components/SettingToggleRow';
+import { SettingsSection } from '../components/SettingSection';
+import logger from '@irdashies/utils/logger';
+
+type LayerStatus = 'checking' | 'registered' | 'missing' | 'unknown';
 
 export const VrSettings = () => {
   const { currentDashboard, onDashboardUpdated } = useDashboard();
   const [settings, setSettings] = useState({
+    enabled:
+      currentDashboard?.generalSettings?.vr?.enabled ??
+      DEFAULT_VR_OVERLAY_SETTINGS.enabled,
     width:
       currentDashboard?.generalSettings?.vr?.width ??
       DEFAULT_VR_OVERLAY_SETTINGS.width,
@@ -23,6 +31,31 @@ export const VrSettings = () => {
       currentDashboard?.generalSettings?.vr?.vertical ??
       DEFAULT_VR_OVERLAY_SETTINGS.vertical,
   });
+  const [layerStatus, setLayerStatus] = useState<LayerStatus>('checking');
+  const [layerBusy, setLayerBusy] = useState(false);
+  const [layerRequired, setLayerRequired] = useState(false);
+
+  const refreshLayerStatus = useCallback(() => {
+    if (!window.openxrBridge) {
+      setLayerStatus('unknown');
+      return;
+    }
+    setLayerStatus('checking');
+    window.openxrBridge
+      .checkLayer()
+      .then((registered) => {
+        if (registered === null) setLayerStatus('unknown');
+        else setLayerStatus(registered ? 'registered' : 'missing');
+      })
+      .catch((err) => {
+        logger.error('Failed to check OpenXR layer', err);
+        setLayerStatus('unknown');
+      });
+  }, []);
+
+  useEffect(() => {
+    refreshLayerStatus();
+  }, [refreshLayerStatus]);
 
   if (!currentDashboard || !onDashboardUpdated) {
     return <>Loading...</>;
@@ -38,57 +71,182 @@ export const VrSettings = () => {
     onDashboardUpdated({ ...currentDashboard, generalSettings });
   };
 
+  const toggleEnabled = async (enabled: boolean) => {
+    if (enabled && window.openxrBridge) {
+      // Do not hide the desktop overlays if the OpenXR layer is not
+      // registered: nothing would be visible in VR. Require registration
+      // first (or a successful check when the status is unverifiable).
+      setLayerBusy(true);
+      try {
+        const registered = await window.openxrBridge.checkLayer();
+        if (registered === false) {
+          setLayerRequired(true);
+          setLayerStatus('missing');
+          return;
+        }
+      } catch (err) {
+        logger.error('Failed to check OpenXR layer before enabling VR', err);
+      } finally {
+        setLayerBusy(false);
+      }
+    }
+    setLayerRequired(false);
+    update({ enabled });
+  };
+
+  const runLayerAction = async (action: 'register' | 'unregister') => {
+    if (!window.openxrBridge || layerBusy) return;
+    setLayerBusy(true);
+    try {
+      if (action === 'register') {
+        const ok = await window.openxrBridge.registerLayer();
+        if (ok) {
+          logger.info('OpenXR layer registered from Settings');
+          setLayerStatus('registered');
+          setLayerRequired(false);
+        }
+      } else {
+        const ok = await window.openxrBridge.unregisterLayer();
+        if (ok) {
+          logger.info('OpenXR layer unregistered from Settings');
+          setLayerStatus('missing');
+        }
+      }
+    } catch (err) {
+      logger.error(`Failed to ${action} OpenXR layer`, err);
+    } finally {
+      setLayerBusy(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-none p-4 bg-slate-700 rounded">
         <h2 className="text-xl mb-1">VR</h2>
         <p className="text-slate-400">
-          Configure the VR overlay quad position and size. Launch the app with{' '}
-          <code className="bg-slate-600 px-1 rounded">launch-vr.bat</code> to
-          enable VR mode.
+          Enable the VR overlay quad and configure its position and size. Enabling
+          VR hides the desktop overlays; disabling it restores them.
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 space-y-6 p-4 mt-4">
-        <SettingNumberRow
-          title="Width (m)"
-          description="Physical width of the overlay quad. Height follows your display aspect."
-          value={settings.width}
-          min={0.5}
-          max={4}
-          step={0.01}
-          onChange={(width) => update({ width })}
-        />
+        <SettingsSection title="VR overlay">
+          <SettingToggleRow
+            title="Enable VR overlays"
+            description="Shows the overlays in VR via the OpenXR layer and hides the desktop overlay windows."
+            enabled={settings.enabled}
+            onToggle={toggleEnabled}
+          />
 
-        <SettingNumberRow
-          title="Distance (m)"
-          description="Distance of the overlay quad from the user."
-          value={settings.distance}
-          min={0.3}
-          max={4}
-          step={0.01}
-          onChange={(distance) => update({ distance })}
-        />
+          {layerRequired && (
+            <div className="flex items-start gap-2 p-3 rounded bg-amber-500/10 border border-amber-500/40 text-amber-300 text-sm">
+              <span>
+                The OpenXR layer is not registered, so nothing would be shown in
+                VR. Register the layer below first, then enable VR overlays.
+              </span>
+            </div>
+          )}
 
-        <SettingNumberRow
-          title="Horizontal offset (m)"
-          description="Positive moves the quad to the right."
-          value={settings.horizontal}
-          min={-2}
-          max={2}
-          step={0.01}
-          onChange={(horizontal) => update({ horizontal })}
-        />
+          <SettingNumberRow
+            title="Width (m)"
+            description="Physical width of the overlay quad. Height follows your display aspect."
+            value={settings.width}
+            min={0.5}
+            max={4}
+            step={0.01}
+            onChange={(width) => update({ width })}
+          />
 
-        <SettingNumberRow
-          title="Vertical offset (m)"
-          description="Positive moves the quad up."
-          value={settings.vertical}
-          min={-2}
-          max={2}
-          step={0.01}
-          onChange={(vertical) => update({ vertical })}
-        />
+          <SettingNumberRow
+            title="Distance (m)"
+            description="Distance of the overlay quad from the user."
+            value={settings.distance}
+            min={0.3}
+            max={4}
+            step={0.01}
+            onChange={(distance) => update({ distance })}
+          />
+
+          <SettingNumberRow
+            title="Horizontal offset (m)"
+            description="Positive moves the quad to the right."
+            value={settings.horizontal}
+            min={-2}
+            max={2}
+            step={0.01}
+            onChange={(horizontal) => update({ horizontal })}
+          />
+
+          <SettingNumberRow
+            title="Vertical offset (m)"
+            description="Positive moves the quad up."
+            value={settings.vertical}
+            min={-2}
+            max={2}
+            step={0.01}
+            onChange={(vertical) => update({ vertical })}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="OpenXR layer">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-md font-medium text-slate-300">
+                Layer status
+              </h4>
+              <p className="text-sm text-slate-500 pr-8">
+                The OpenXR API layer must be registered for overlays to appear in
+                VR. This requires administrator privileges.
+              </p>
+            </div>
+            <span
+              className={`text-sm font-medium ${
+                layerStatus === 'registered'
+                  ? 'text-green-400'
+                  : layerStatus === 'checking'
+                    ? 'text-slate-400'
+                    : layerStatus === 'missing'
+                      ? 'text-amber-400'
+                      : 'text-slate-400'
+              }`}
+            >
+              {layerStatus === 'registered'
+                ? 'Registered'
+                : layerStatus === 'checking'
+                  ? 'Checking...'
+                  : layerStatus === 'missing'
+                    ? 'Not registered'
+                    : 'Unknown'}
+            </span>
+          </div>
+
+          <div className="flex gap-2 mt-3">
+            <button
+              type="button"
+              onClick={() => runLayerAction('register')}
+              disabled={layerBusy || layerStatus === 'registered'}
+              className="px-3 py-1.5 rounded text-sm bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              {layerBusy ? 'Working...' : 'Register layer'}
+            </button>
+            <button
+              type="button"
+              onClick={() => runLayerAction('unregister')}
+              disabled={layerBusy || layerStatus !== 'registered'}
+              className="px-3 py-1.5 rounded text-sm bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              Unregister layer
+            </button>
+            <button
+              type="button"
+              onClick={refreshLayerStatus}
+              disabled={layerBusy}
+              className="px-3 py-1.5 rounded text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 transition-colors cursor-pointer"
+            >
+              Refresh
+            </button>
+          </div>
+        </SettingsSection>
 
         <div className="p-4 bg-slate-700/50 rounded text-sm text-slate-300 space-y-2">
           <div className="font-medium mb-2">Edit Mode Shortcuts</div>

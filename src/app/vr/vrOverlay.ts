@@ -279,11 +279,21 @@ function poseFromSettings(settings?: VrOverlaySettings): VrPose {
 }
 
 /**
- * MVP gate: VR overlay is opt-in via env var while it is experimental and not
- * wired into settings yet. Windows only (native addon + OpenXR layer).
+ * Whether the VR overlay is currently running (OSR window + native layer up).
  */
-export function isVrOverlayEnabled(): boolean {
-  return process.platform === 'win32' && process.env.IRDASHIES_VR === '1';
+export function isVrRunning(): boolean {
+  return osrWindow !== null;
+}
+
+/**
+ * MVP gate: VR overlay is opt-in while it is experimental. Enabled when the
+ * `IRDASHIES_VR` env var is set (launch-vr.bat) OR the dashboard VR settings
+ * have `enabled: true` (Settings > VR toggle). Windows only (native addon +
+ * OpenXR layer).
+ */
+export function isVrOverlayEnabled(settings?: VrOverlaySettings): boolean {
+  if (process.platform !== 'win32') return false;
+  return process.env.IRDASHIES_VR === '1' || settings?.enabled === true;
 }
 
 /**
