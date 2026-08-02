@@ -6,6 +6,7 @@ import {
     useTelemetryValue,
     useTelemetryValues,
     useTelemetryValuesRounded,
+    useLapTimesStoreUpdater,
 } from '@irdashies/context';
 import { useCarIdxAverageLapTime } from './useCarIdxAverageLapTime';
 import { SessionState } from '@irdashies/types';
@@ -13,7 +14,7 @@ import { SessionState } from '@irdashies/types';
 // Estimate the total number of laps that will be completed by the drivers car in a timed session.
 export const useTotalRaceValue = () => {
     const carIdx = useFocusCarIdx() as number;
-    const { timeRemaining, timeTotal, totalLaps, state } = useSessionLapCount();
+    const { timeRemaining, timeTotal, totalLaps, state, time, greenFlagTimestamp } = useSessionLapCount();
     const lap = useTelemetryValues('CarIdxLap')?.[carIdx] as number;
     const sessionType = useCurrentSessionType();
     const lapDistPct = useTelemetryValue('LapDistPct');
@@ -24,6 +25,16 @@ export const useTotalRaceValue = () => {
     const bestLapTime = useTelemetryValues('CarIdxBestLapTime')?.[carIdx] as number | undefined;
     const classEstLapTimes = useCarIdxClassEstLapTime();
     const isFixedLapRace = !((timeRemaining > 0) && (timeRemaining !== 604800));
+
+    // Ensure the lap-time store is being populated whenever a race widget that
+    // depends on this projection is rendered. Without this, the store stays
+    // cold (no widget enabled `lapTimeDeltas` / `avgLapTime`) and the projection
+    // silently falls back to iRacing `CarClassEstLapTime` (qualifying-class
+    // pace), which over-estimates total laps for multi-class timed races
+    // (user-reported 55+ vs actual 53).
+    // Must run before the early return below (React hook rules).
+    useLapTimesStoreUpdater(sessionType === 'Race');
+
     const result = {
         isFixedLapRace: isFixedLapRace,
         totalRaceLaps: 0,
@@ -100,12 +111,34 @@ export const useTotalRaceValue = () => {
         }
     } else {
         // Time-limited race: estimate based on when the leader will receive the checkered flag.
-        // 1. ceil(timeTotal / leaderAvgLapTime) = laps the leader will complete
-        // 2. effective race duration = leaderEstimatedLaps * leaderAvgLapTime
-        // 3. playerTotalLaps = effectiveRaceTime / playerAvgLapTime (rounded to 1dp)
+        // Uses the observed wall-clock pace (distance travelled since the green flag),
+        // which inherently includes each car's pit stop losses — unlike the lap-time
+        // average (on-track pace only). This matters in multi-class timed races where
+        // pit strategies differ (e.g. leader 1 stop vs player 2 stops).
+        //   1. wall-clock pace per car = elapsed time / distance travelled
+        //   2. leaderFinalLap = laps the leader will complete (checkered-flag moment)
+        //   3. effective race duration = leaderFinalLap * leaderPaceWall
+        //   4. playerTotalLaps = effectiveRaceTime / playerPaceWall (rounded to 1dp)
         result.totalRaceTime = timeTotal;
 
-        if (timeTotal > 0 && leaderAvgLapTime > 1 && playerAvgLapTime > 1) {
+        const elapsed = (time ?? 0) - (greenFlagTimestamp ?? 0);
+        const leaderDist = leaderLap > 0 ? leaderLap - 1 + leaderLapDistPct : 0;
+        const playerDist = lap !== undefined && lap > 0 ? lap - 1 + (lapDistPct ?? 0) : 0;
+
+        const leaderPaceWall = elapsed > 0 && leaderDist > 0 ? elapsed / leaderDist : 0;
+        const playerPaceWall = elapsed > 0 && playerDist > 0 ? elapsed / playerDist : 0;
+
+        if (
+            timeRemaining !== undefined &&
+            timeRemaining >= 0 &&
+            leaderPaceWall > 1 &&
+            playerPaceWall > 1
+        ) {
+            const leaderFinalLap = Math.ceil((elapsed + timeRemaining) / leaderPaceWall);
+            const effectiveRaceTime = leaderFinalLap * leaderPaceWall;
+            result.totalRaceLaps = Math.round((effectiveRaceTime / playerPaceWall) * 10) / 10;
+        } else if (timeTotal > 0 && leaderAvgLapTime > 1 && playerAvgLapTime > 1) {
+            // Fallback (e.g. green flag not observed yet): pace-based estimate.
             const leaderEstimatedLaps = Math.ceil(timeTotal / leaderAvgLapTime);
             const effectiveRaceTime = leaderEstimatedLaps * leaderAvgLapTime;
             result.totalRaceLaps = Math.round((effectiveRaceTime / playerAvgLapTime) * 10) / 10;
