@@ -10,6 +10,7 @@ vi.mock('@irdashies/context', () => ({
   useTelemetryValues: vi.fn(),
   useTelemetryValuesRounded: vi.fn(),
   useCarIdxClassEstLapTime: vi.fn(),
+  useLapTimesStoreUpdater: vi.fn(),
 }));
 
 vi.mock('../../components/Standings/hooks/useSessionLapCount', () => ({
@@ -45,6 +46,10 @@ interface Scenario {
   sessionTimeRemain: number;
   sessionTimeTotal: number;
   sessionLaps: number;
+  /** SessionTime (seconds since session start); used for wall-clock estimate */
+  sessionTime?: number;
+  /** greenFlagTimestamp (SessionTime at green flag); used for wall-clock estimate */
+  greenFlagTimestamp?: number;
 }
 
 function applyScenario(s: Scenario) {
@@ -80,10 +85,10 @@ function applyScenario(s: Scenario) {
     state: SessionState.Racing,
     currentLap: s.lap,
     totalLaps: s.sessionLaps,
-    time: 0,
+    time: s.sessionTime ?? 0,
     timeTotal: s.sessionTimeTotal,
     timeRemaining: s.sessionTimeRemain,
-    greenFlagTimestamp: 0,
+    greenFlagTimestamp: s.greenFlagTimestamp ?? 0,
   });
 }
 
@@ -277,6 +282,70 @@ describe('useTotalRaceValue', () => {
       });
       const { result } = renderHook(() => useTotalRaceValue());
       expect(result.current.totalRaceLaps).toBe(20);
+    });
+  });
+
+  describe('user-reported 2h multi-class race (TCR + GT4, 2026-08-01)', () => {
+    // Real race: 2h timed. Global leader (faster class) 62 laps with 1 pit stop
+    // (~62s at lap 31); player (slower class) 54 laps with 2 pit stops +
+    // drive-through. Old calculation (on-track pace, no pit time) showed 54.4
+    // laps -> ceil 55 -> fuel shortage warning; actual result: 54 laps.
+    // Wall-clock pace (distance since green flag) inherently includes pit losses.
+    //
+    // Tick simulation (leader crosses v62 at t=7200, player crosses v54 at 7259):
+    //   t=7000, remain=200: leader dist 60.263, player dist 52.203 -> 53.7
+    //   t=7150, remain=50:  leader dist 61.566, player dist 53.264 -> 53.6
+    const wallClockScenario: Scenario = {
+      lap: 53,
+      lapDistPct: 0.203, // player on lap 53, 20.3% in -> dist 52.203
+      leaderLap: 61,
+      leaderLapDistPct: 0.263, // leader on lap 61, 26.3% in -> dist 60.263
+      avgLapTimeLeader: 117.615, // iRacing-reported leader avg (unused by wall-clock path)
+      avgLapTimePlayer: 134.0,
+      sessionTimeRemain: 200,
+      sessionTimeTotal: 7200,
+      sessionLaps: 32767, // iRacing sentinel for "unlimited" (timed race)
+      sessionTime: 7000,
+      greenFlagTimestamp: 0,
+    };
+
+    it('uses wall-clock pace (pit stops included) instead of on-track pace', () => {
+      applyScenario(wallClockScenario);
+      const { result } = renderHook(() => useTotalRaceValue());
+      const total = result.current.totalRaceLaps;
+      // elapsed=7000, leaderPaceWall=7000/60.263=116.16, playerPaceWall=7000/52.203=134.09
+      // leaderFinalLap=ceil(7200/116.16)=62, eff=62*116.16=7201.8
+      // totalRaceLaps=7201.8/134.09=53.7  (NOT 54.4/55 as before)
+      expect(total).toBeCloseTo(53.7, 1);
+    });
+
+    it('remains stable near the checkered flag (~53.6, not 55)', () => {
+      applyScenario({
+        ...wallClockScenario,
+        lap: 54,
+        lapDistPct: 0.264, // player dist 53.264
+        leaderLap: 62,
+        leaderLapDistPct: 0.566, // leader dist 61.566
+        sessionTime: 7150,
+        sessionTimeRemain: 50,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leaderPaceWall=7150/61.566=116.14, playerPaceWall=7150/53.264=134.24
+      // leaderFinalLap=ceil(7200/116.14)=62, eff=7200.4 -> totalRaceLaps=7200.4/134.24=53.6
+      expect(result.current.totalRaceLaps).toBeCloseTo(53.6, 1);
+    });
+
+    it('falls back to on-track pace estimate when green flag is unknown', () => {
+      // No greenFlagTimestamp (e.g. late join before first S/F crossing):
+      // wall-clock is unavailable -> legacy pace-based estimate.
+      applyScenario({
+        ...wallClockScenario,
+        sessionTime: 0,
+        greenFlagTimestamp: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // Fallback: ceil(7200/117.615)=62, eff=7292.1, /134=54.4
+      expect(result.current.totalRaceLaps).toBeCloseTo(54.4, 1);
     });
   });
 
