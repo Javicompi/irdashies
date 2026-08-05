@@ -290,18 +290,20 @@ describe('useTotalRaceValue', () => {
     // (~62s at lap 31); player (slower class) 54 laps with 2 pit stops +
     // drive-through. Old calculation (on-track pace, no pit time) showed 54.4
     // laps -> ceil 55 -> fuel shortage warning; actual result: 54 laps.
-    // Wall-clock pace (distance since green flag) inherently includes pit losses.
+    // The fix projects the FUTURE at clean on-track pace (measured laps) and
+    // falls back to wall-clock pace (distance since green flag) when the
+    // lap-time store is cold.
     //
     // Tick simulation (leader crosses v62 at t=7200, player crosses v54 at 7259):
     //   t=7000, remain=200: leader dist 60.263, player dist 52.203 -> 53.7
     //   t=7150, remain=50:  leader dist 61.566, player dist 53.264 -> 53.6
-    const wallClockScenario: Scenario = {
+    const raceScenario: Scenario = {
       lap: 53,
       lapDistPct: 0.203, // player on lap 53, 20.3% in -> dist 52.203
       leaderLap: 61,
-      leaderLapDistPct: 0.263, // leader on lap 61, 26.3% in -> dist 60.263
-      avgLapTimeLeader: 117.615, // iRacing-reported leader avg (unused by wall-clock path)
-      avgLapTimePlayer: 134.0,
+      leaderLapDistPct: 0.26, // leader on lap 61, 26% in -> dist 60.26
+      avgLapTimeLeader: 115.13, // leader clean on-track pace (62 laps in 7200s + 62s stop)
+      avgLapTimePlayer: 134.0, // player on-track pace
       sessionTimeRemain: 200,
       sessionTimeTotal: 7200,
       sessionLaps: 32767, // iRacing sentinel for "unlimited" (timed race)
@@ -309,43 +311,108 @@ describe('useTotalRaceValue', () => {
       greenFlagTimestamp: 0,
     };
 
-    it('uses wall-clock pace (pit stops included) instead of on-track pace', () => {
-      applyScenario(wallClockScenario);
+    it('projects the future at clean on-track pace (pit stops not repeated)', () => {
+      applyScenario(raceScenario);
       const { result } = renderHook(() => useTotalRaceValue());
       const total = result.current.totalRaceLaps;
-      // elapsed=7000, leaderPaceWall=7000/60.263=116.16, playerPaceWall=7000/52.203=134.09
-      // leaderFinalLap=ceil(7200/116.16)=62, eff=62*116.16=7201.8
-      // totalRaceLaps=7201.8/134.09=53.7  (NOT 54.4/55 as before)
+      // timeToCompleteCurrentLap=(1-0.26)*115.13=85.2 < remain=200
+      // lapsUntilCheckered=ceil((200-85.2)/115.13)=ceil(0.997)=1
+      // leaderRemainingTime=85.2+115.13=200.33
+      // playerTotalLaps=52.203+200.33/134=53.70  (NOT 54.4/55 as before)
       expect(total).toBeCloseTo(53.7, 1);
     });
 
     it('remains stable near the checkered flag (~53.6, not 55)', () => {
       applyScenario({
-        ...wallClockScenario,
+        ...raceScenario,
         lap: 54,
         lapDistPct: 0.264, // player dist 53.264
         leaderLap: 62,
-        leaderLapDistPct: 0.566, // leader dist 61.566
+        leaderLapDistPct: 0.56, // leader on lap 62, 56% in
         sessionTime: 7150,
         sessionTimeRemain: 50,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // leaderPaceWall=7150/61.566=116.14, playerPaceWall=7150/53.264=134.24
-      // leaderFinalLap=ceil(7200/116.14)=62, eff=7200.4 -> totalRaceLaps=7200.4/134.24=53.6
+      // timeToCompleteCurrentLap=(1-0.56)*115.13=50.66 > remain=50
+      // -> checkered falls at the current lap crossing: leaderRemainingTime=50.66
+      // playerTotalLaps=53.264+50.66/134=53.64
       expect(result.current.totalRaceLaps).toBeCloseTo(53.6, 1);
     });
 
-    it('falls back to on-track pace estimate when green flag is unknown', () => {
+    it('falls back to wall-clock pace when no lap-time data is available', () => {
+      // avgLapTimes=[0,0] (no laps recorded yet) -> wall-clock estimate.
+      applyScenario(raceScenario);
+      vi.mocked(useCarIdxAverageLapTime).mockReturnValue([0, 0] as never);
+      const { result } = renderHook(() => useTotalRaceValue());
+      // elapsed=7000, leaderPaceWall=7000/60.26=116.16, playerPaceWall=7000/52.203=134.09
+      // leaderFinalLap=ceil(7200/116.16)=62, eff=62*116.16=7201.9
+      // totalRaceLaps=7201.9/134.09=53.7
+      expect(result.current.totalRaceLaps).toBeCloseTo(53.7, 1);
+    });
+
+    it('falls back to pace-based estimate when green flag is unknown', () => {
       // No greenFlagTimestamp (e.g. late join before first S/F crossing):
       // wall-clock is unavailable -> legacy pace-based estimate.
       applyScenario({
-        ...wallClockScenario,
+        ...raceScenario,
         sessionTime: 0,
         greenFlagTimestamp: 0,
       });
       const { result } = renderHook(() => useTotalRaceValue());
-      // Fallback: ceil(7200/117.615)=62, eff=7292.1, /134=54.4
-      expect(result.current.totalRaceLaps).toBeCloseTo(54.4, 1);
+      // Fallback: ceil(7200/115.13)=63, eff=63*115.13=7253.2, /134=54.1
+      expect(result.current.totalRaceLaps).toBeCloseTo(54.1, 1);
+    });
+  });
+
+  describe('user-reported 2h races where leader stops twice or is slower class', () => {
+    // Race 2026-07-26 (same class as player): global leader 53 laps, 2 pit stops
+    // (70s+56s=126s), on-track ~135.8s; player 53 laps, on-track ~137.3s.
+    // Old calculation: ceil(7200/135.8)=54 -> 54 laps (fuel over-estimate).
+    // On-track projection at t=6000: timeToCompleteCurrentLap=(1-0.25)*135.8=101.85
+    //   lapsUntilCheckered=ceil((1200-101.85)/135.8)=ceil(8.086)=9
+    //   leaderRemainingTime=101.85+9*135.8=1324.1
+    //   playerTotalLaps=42.83+1324.1/137.3=52.47 -> 52.5
+    it('2026-07-26: leader 2 stops, same class -> 52.5 laps (53 ceil)', () => {
+      applyScenario({
+        lap: 43,
+        lapDistPct: 0.83,
+        leaderLap: 44,
+        leaderLapDistPct: 0.25,
+        avgLapTimeLeader: 135.8,
+        avgLapTimePlayer: 137.3,
+        sessionTimeRemain: 1200,
+        sessionTimeTotal: 7200,
+        sessionLaps: 32767,
+        sessionTime: 6000,
+        greenFlagTimestamp: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.totalRaceLaps).toBeCloseTo(52.5, 1);
+    });
+
+    // Race 2026-07-25 (player in FASTER class, leader is slower-class TCR):
+    // global leader 53 laps, 1 pit stop (60s), on-track ~137.1s; player 53 laps,
+    // on-track ~137.5s. Old calculation over-estimated -> fuel over-estimate.
+    // On-track projection at t=6000: timeToCompleteCurrentLap=(1-0.33)*137.1=91.9
+    //   lapsUntilCheckered=ceil((1200-91.9)/137.1)=ceil(8.081)=9
+    //   leaderRemainingTime=91.9+9*137.1=1325.8
+    //   playerTotalLaps=42.84+1325.8/137.5=52.48 -> 52.5
+    it('2026-07-25: slower-class leader, 1 stop -> 52.5 laps (53 ceil)', () => {
+      applyScenario({
+        lap: 43,
+        lapDistPct: 0.84,
+        leaderLap: 44,
+        leaderLapDistPct: 0.33,
+        avgLapTimeLeader: 137.1,
+        avgLapTimePlayer: 137.5,
+        sessionTimeRemain: 1200,
+        sessionTimeTotal: 7200,
+        sessionLaps: 32767,
+        sessionTime: 6000,
+        greenFlagTimestamp: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.totalRaceLaps).toBeCloseTo(52.5, 1);
     });
   });
 
