@@ -322,6 +322,48 @@ describe('useTotalRaceValue', () => {
       expect(total).toBeCloseTo(53.7, 1);
     });
 
+    it('projects leader race laps to the moment the clock reaches 0 (timed race)', () => {
+      applyScenario(raceScenario);
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leader on lap 61 @26% (dist 60.26), remain=200, pace 115.13
+      // leaderRaceLaps = 60.26 + 200/115.13 = 61.997 -> 62.0 (converges to his total)
+      expect(result.current.leaderRaceLaps).toBeCloseTo(62.0, 1);
+    });
+
+    it('leader race laps shows fractional value mid-race', () => {
+      applyScenario({
+        ...raceScenario,
+        leaderLap: 61,
+        leaderLapDistPct: 0.26,
+        sessionTime: 6500,
+        sessionTimeRemain: 700,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leaderDist = 60.26, remain=700, pace 115.13
+      // leaderRaceLaps = 60.26 + 700/115.13 = 66.34 -> 66.3
+      expect(result.current.leaderRaceLaps).toBeCloseTo(66.3, 1);
+    });
+
+    it('falls back to current position when no remaining time (fixed-lap race)', () => {
+      // Fixed-lap race: leaderRaceLaps stays at the leader's current position.
+      applyScenario({
+        lap: 14,
+        lapDistPct: 0.5,
+        leaderLap: 15,
+        leaderLapDistPct: 0.5,
+        avgLapTimeLeader: 105,
+        avgLapTimePlayer: 120,
+        sessionTimeRemain: 604800, // fixed-lap sentinel
+        sessionTimeTotal: 604800,
+        sessionLaps: 20,
+        sessionTime: 300,
+        greenFlagTimestamp: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leader on lap 15 @50% -> position 14.5
+      expect(result.current.leaderRaceLaps).toBeCloseTo(14.5, 1);
+    });
+
     it('remains stable near the checkered flag (~53.6, not 55)', () => {
       applyScenario({
         ...raceScenario,

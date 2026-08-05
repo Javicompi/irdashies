@@ -44,6 +44,7 @@ export const useTotalRaceValue = () => {
         totalRaceLaps: 0,
         totalRaceTime: 0,
         adjustedRaceTime: 0,
+        leaderRaceLaps: 0,
     };
 
     // No race, no business
@@ -78,6 +79,15 @@ export const useTotalRaceValue = () => {
             : (classEstLapTimes?.[carIdx] ?? 0) > 0 && classEstLapTimes?.[carIdx] !== undefined
                 ? classEstLapTimes?.[carIdx]
                 : (bestLapTime ?? 0);
+
+    // Leader's race lap count.
+    // - Fixed-lap races: the leader's current position (the race ends when he
+    //   completes totalLaps, so his position is what matters).
+    // - Timed races: projected laps the leader will have completed when the
+    //   race clock reaches 0 (position + timeRemaining / clean on-track pace),
+    //   mirroring the player's projection. Overridden in the timed branch.
+    result.leaderRaceLaps =
+        leaderLap > 0 ? Math.round((leaderLap - 1 + leaderLapDistPct) * 10) / 10 : 0;
 
 
     if (isFixedLapRace) {
@@ -136,6 +146,21 @@ export const useTotalRaceValue = () => {
         // Clean on-track pace (falls back to class estimate before laps are recorded).
         const leaderPace = avgLapTimes[leaderLapTimeIdx] ?? 0;
         const playerPace = avgLapTimes[carIdx] ?? 0;
+
+        // Project the leader's lap count at the moment the race clock reaches
+        // 0 (timeRemaining): current position + laps covered in the remaining
+        // time at his clean on-track pace. This is the timed-race counterpart
+        // of the player's projection (which runs until the leader crosses the
+        // line). Gives a fractional, meaningful value for the fuelLaps widget.
+        if (
+            timeRemaining !== undefined &&
+            timeRemaining >= 0 &&
+            leaderDist > 0 &&
+            leaderPace > 1
+        ) {
+            result.leaderRaceLaps =
+                Math.round((leaderDist + timeRemaining / leaderPace) * 10) / 10;
+        }
 
         if (
             elapsed > 0 &&
@@ -198,7 +223,8 @@ export const useTotalRaceValue = () => {
             isFixedLapRace: isFixedLapRace,
             totalRaceLaps: lap,
             totalRaceTime: result.totalRaceTime,
-            adjustedRaceTime: result.adjustedRaceTime
+            adjustedRaceTime: result.adjustedRaceTime,
+            leaderRaceLaps: result.leaderRaceLaps
         };
     }
 

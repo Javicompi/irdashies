@@ -7,6 +7,7 @@ import {
 import { useFuelCalculation } from './useFuelCalculation';
 import {
   FuelCalculatorHeader,
+  FuelCalculatorLaps,
   FuelCalculatorGauge,
   FuelCalculatorConsumptionGrid,
   FuelCalculatorPitScenarios,
@@ -228,6 +229,8 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
     switch (widgetId) {
       case 'fuelHeader':
         return <FuelCalculatorHeader {...widgetProps} />;
+      case 'fuelLaps':
+        return <FuelCalculatorLaps {...widgetProps} />;
       case 'fuelGauge':
         return <FuelCalculatorGauge {...widgetProps} />;
       case 'fuelGrid':

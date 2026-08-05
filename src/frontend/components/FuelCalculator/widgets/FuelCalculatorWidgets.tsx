@@ -1,4 +1,5 @@
 export * from './FuelCalculatorHeader';
+export * from './FuelCalculatorLaps';
 export * from './FuelCalculatorGauge';
 export * from './FuelCalculatorConsumptionGrid';
 export * from './FuelCalculatorPitScenarios';
