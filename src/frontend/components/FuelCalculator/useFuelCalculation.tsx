@@ -9,7 +9,9 @@ import {
   useSessionLaps,
   useSessionStore,
   useTelemetryValue,
+  useTelemetryValues,
   useTotalRaceValue,
+  useGreenFlagTimestamp,
 } from '@irdashies/context';
 import { useStore } from 'zustand';
 import {
@@ -80,8 +82,21 @@ export function useFuelCalculation(
   const isOnTrack = useTelemetryValue('IsOnTrack');
 
   // Use centralized total race laps calculation
-  const { isFixedLapRace, totalRaceLaps: calculatedTotalRaceLaps } =
+  const { isFixedLapRace, totalRaceLaps: calculatedTotalRaceLaps, leaderRaceLaps } =
     useTotalRaceValue();
+
+  // Green flag timestamp + raw leader data for the debug log
+  const greenFlagTimestamp = useGreenFlagTimestamp();
+  const carIdxLap = useTelemetryValues('CarIdxLap');
+  const carIdxPosition = useTelemetryValues('CarIdxPosition');
+  const carIdxLapDistPct = useTelemetryValues('CarIdxLapDistPct');
+
+  // Overall race leader (position 1) raw data
+  const leaderCarIdx = carIdxPosition?.indexOf(1) ?? -1;
+  const leaderRawLap =
+    leaderCarIdx >= 0 ? (carIdxLap?.[leaderCarIdx] ?? 0) : 0;
+  const leaderRawLapDistPct =
+    leaderCarIdx >= 0 ? (carIdxLapDistPct?.[leaderCarIdx] ?? 0) : 0;
 
   // Check if current session is a Race
   const sessions = useStore(
@@ -1580,6 +1595,22 @@ export function useFuelCalculation(
         sessionLaps,
         sessionFlags,
         sessionState,
+        sessionTime,
+      },
+      raceProjection: {
+        isFixedLapRace,
+        totalRaceLaps: calculatedTotalRaceLaps,
+        leaderRaceLaps,
+        greenFlagTimestamp,
+        elapsedSinceGreen:
+          greenFlagTimestamp !== null && sessionTime !== undefined
+            ? Math.max(0, sessionTime - greenFlagTimestamp)
+            : null,
+      },
+      leaderRaw: {
+        carIdx: leaderCarIdx,
+        lap: leaderRawLap,
+        lapDistPct: leaderRawLapDistPct,
       },
       internal: {
         lapStartFuel: useFuelStore.getState().lapStartFuel,
@@ -1601,6 +1632,14 @@ export function useFuelCalculation(
       sessionLaps,
       sessionFlags,
       sessionState,
+      sessionTime,
+      isFixedLapRace,
+      calculatedTotalRaceLaps,
+      leaderRaceLaps,
+      greenFlagTimestamp,
+      leaderCarIdx,
+      leaderRawLap,
+      leaderRawLapDistPct,
       lapHistorySize,
       storedTrackId,
       storedCarName,
