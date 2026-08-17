@@ -881,6 +881,10 @@ export const defaultDashboard: {
             valueFontSize: 12,
             barFontSize: 8,
           },
+          fuelLaps: {
+            labelFontSize: 10,
+            valueFontSize: 14,
+          },
           fuelHeader: {
             labelFontSize: 10,
             valueFontSize: 14,

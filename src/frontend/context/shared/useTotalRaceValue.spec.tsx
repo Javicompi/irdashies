@@ -110,7 +110,7 @@ describe('useTotalRaceValue', () => {
       avgLapTimePlayer: 120, // GT4 (player, slower class)
       sessionTimeRemain: 300,
       sessionTimeTotal: 1800,
-      sessionLaps: 32767, // iRacing sentinel for "unlimited" (timed race)
+      sessionLaps: 0, // timed race: SessionLaps is "unlimited" -> totalLaps = 0
     };
 
     it('estimates total laps from leader and player average pace', () => {
@@ -306,7 +306,7 @@ describe('useTotalRaceValue', () => {
       avgLapTimePlayer: 134.0, // player on-track pace
       sessionTimeRemain: 200,
       sessionTimeTotal: 7200,
-      sessionLaps: 32767, // iRacing sentinel for "unlimited" (timed race)
+      sessionLaps: 0, // timed race: SessionLaps is "unlimited" -> totalLaps = 0
       sessionTime: 7000,
       greenFlagTimestamp: 0,
     };
@@ -320,6 +320,48 @@ describe('useTotalRaceValue', () => {
       // leaderRemainingTime=85.2+115.13=200.33
       // playerTotalLaps=52.203+200.33/134=53.70  (NOT 54.4/55 as before)
       expect(total).toBeCloseTo(53.7, 1);
+    });
+
+    it('projects leader race laps to the moment the clock reaches 0 (timed race)', () => {
+      applyScenario(raceScenario);
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leader on lap 61 @26% (dist 60.26), remain=200, pace 115.13
+      // leaderRaceLaps = 60.26 + 200/115.13 = 61.997 -> 62.0 (converges to his total)
+      expect(result.current.leaderRaceLaps).toBeCloseTo(62.0, 1);
+    });
+
+    it('leader race laps shows fractional value mid-race', () => {
+      applyScenario({
+        ...raceScenario,
+        leaderLap: 61,
+        leaderLapDistPct: 0.26,
+        sessionTime: 6500,
+        sessionTimeRemain: 700,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leaderDist = 60.26, remain=700, pace 115.13
+      // leaderRaceLaps = 60.26 + 700/115.13 = 66.34 -> 66.3
+      expect(result.current.leaderRaceLaps).toBeCloseTo(66.3, 1);
+    });
+
+    it('falls back to current position when no remaining time (fixed-lap race)', () => {
+      // Fixed-lap race: leaderRaceLaps stays at the leader's current position.
+      applyScenario({
+        lap: 14,
+        lapDistPct: 0.5,
+        leaderLap: 15,
+        leaderLapDistPct: 0.5,
+        avgLapTimeLeader: 105,
+        avgLapTimePlayer: 120,
+        sessionTimeRemain: 604800, // fixed-lap sentinel
+        sessionTimeTotal: 604800,
+        sessionLaps: 20,
+        sessionTime: 300,
+        greenFlagTimestamp: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      // leader on lap 15 @50% -> position 14.5
+      expect(result.current.leaderRaceLaps).toBeCloseTo(14.5, 1);
     });
 
     it('remains stable near the checkered flag (~53.6, not 55)', () => {
@@ -362,6 +404,71 @@ describe('useTotalRaceValue', () => {
       // Fallback: ceil(7200/115.13)=63, eff=63*115.13=7253.2, /134=54.1
       expect(result.current.totalRaceLaps).toBeCloseTo(54.1, 1);
     });
+
+    it('REGRESSION: clock at 0 (timeRemaining=0) must NOT collapse to fixed-lap / 0', () => {
+      // Bug (user-reported, confirmed via fuel_*.log): when SessionTimeRemain
+      // hits 0 near the checkered flag of a timed race, the old
+      // isFixedLapRace check `!((timeRemaining>0)&&(timeRemaining!==604800))`
+      // flipped to true, entering the fixed-lap branch and returning 0 for
+      // the last ~60 seconds. Timed races have totalLaps=0 ("unlimited").
+      applyScenario({
+        ...raceScenario,
+        sessionTime: 7457, // clock already at 0
+        sessionTimeRemain: 0,
+      });
+      const { result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.isFixedLapRace).toBe(false);
+      // leader on lap 61 @26% (dist 60.26), remain=0, pace 115.13
+      // leaderRemainingTime = timeToCompleteCurrentLap = (1-0.26)*115.13 = 85.2
+      // playerTotalLaps = 52.203 + 85.2/134 = 52.84
+      expect(result.current.totalRaceLaps).toBeCloseTo(52.8, 1);
+      // leader projects to the moment the clock hits 0: 60.26 + 0/115.13 = 60.3
+      expect(result.current.leaderRaceLaps).toBeCloseTo(60.3, 1);
+    });
+
+    it('REGRESSION: leader telemetry gone after checkered keeps last valid leaderRaceLaps', () => {
+      // Bug (user-reported, confirmed via fuel_*.log): once the checkered flag
+      // falls, the leader stops reporting telemetry (CarIdxLap = -1), which
+      // collapsed leaderRaceLaps to 0 and made the fuelLaps widget show "--".
+      // The hook must keep the last valid projection.
+      // First render: leader still reporting (lap 62 @56%, remain 50).
+      applyScenario({
+        ...raceScenario,
+        lap: 54,
+        lapDistPct: 0.264,
+        leaderLap: 62,
+        leaderLapDistPct: 0.56,
+        sessionTime: 7150,
+        sessionTimeRemain: 50,
+      });
+      const { rerender, result } = renderHook(() => useTotalRaceValue());
+      expect(result.current.leaderRaceLaps).toBeGreaterThan(60);
+
+      // Second render: Checkered state, leader stops reporting (lap -1).
+      applyScenario({
+        ...raceScenario,
+        lap: 54,
+        lapDistPct: 0.264,
+        leaderLap: -1,
+        leaderLapDistPct: -1,
+        sessionTime: 7160,
+        sessionTimeRemain: 40,
+      });
+      vi.mocked(useSessionLapCount).mockReturnValue({
+        state: SessionState.Checkered,
+        currentLap: 54,
+        totalLaps: 0,
+        time: 7160,
+        timeTotal: 7200,
+        timeRemaining: 40,
+        greenFlagTimestamp: 0,
+      });
+      rerender();
+      // totalRaceLaps freezes at the player's lap; leaderRaceLaps keeps the
+      // last valid value (not 0).
+      expect(result.current.totalRaceLaps).toBe(54);
+      expect(result.current.leaderRaceLaps).toBeGreaterThan(60);
+    });
   });
 
   describe('user-reported 2h races where leader stops twice or is slower class', () => {
@@ -382,7 +489,7 @@ describe('useTotalRaceValue', () => {
         avgLapTimePlayer: 137.3,
         sessionTimeRemain: 1200,
         sessionTimeTotal: 7200,
-        sessionLaps: 32767,
+        sessionLaps: 0, // timed race
         sessionTime: 6000,
         greenFlagTimestamp: 0,
       });
@@ -407,7 +514,7 @@ describe('useTotalRaceValue', () => {
         avgLapTimePlayer: 137.5,
         sessionTimeRemain: 1200,
         sessionTimeTotal: 7200,
-        sessionLaps: 32767,
+        sessionLaps: 0, // timed race
         sessionTime: 6000,
         greenFlagTimestamp: 0,
       });

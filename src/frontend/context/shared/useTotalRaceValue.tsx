@@ -10,9 +10,14 @@ import {
 } from '@irdashies/context';
 import { useCarIdxAverageLapTime } from './useCarIdxAverageLapTime';
 import { SessionState } from '@irdashies/types';
+import { useState } from 'react';
 
 // Estimate the total number of laps that will be completed by the drivers car in a timed session.
 export const useTotalRaceValue = () => {
+    // Last valid leader lap projection. Once the checkered flag falls the
+    // leader stops reporting telemetry (CarIdxLap = -1), which would collapse
+    // leaderRaceLaps to 0; keep the last valid value instead.
+    const [lastLeaderRaceLaps, setLastLeaderRaceLaps] = useState(0);
     const carIdx = useFocusCarIdx() as number;
     const { timeRemaining, timeTotal, totalLaps, state, time, greenFlagTimestamp } = useSessionLapCount();
     const lap = useTelemetryValues('CarIdxLap')?.[carIdx] as number;
@@ -28,7 +33,14 @@ export const useTotalRaceValue = () => {
     // lap count is not relevant at the very start of a race.
     const bestLapTime = useTelemetryValues('CarIdxBestLapTime')?.[carIdx] as number | undefined;
     const classEstLapTimes = useCarIdxClassEstLapTime();
-    const isFixedLapRace = !((timeRemaining > 0) && (timeRemaining !== 604800));
+    // Fixed-lap race = SessionLaps is a number > 0 (e.g. 20 laps).
+    // Timed races report SessionLaps as "unlimited" -> totalLaps = 0.
+    // Do NOT derive this from timeRemaining: when the clock hits 0 at the end
+    // of a timed race, timeRemaining becomes 0 and the old check
+    // `!((timeRemaining > 0) && (timeRemaining !== 604800))` wrongly flipped to
+    // "fixed-lap", collapsing totalRaceLaps to 0 for the last ~60s before the
+    // checkered flag (user-reported bug, confirmed via fuel_*.log).
+    const isFixedLapRace = totalLaps > 0;
 
     // Ensure the lap-time store is being populated whenever a race widget that
     // depends on this projection is rendered. Without this, the store stays
@@ -44,6 +56,7 @@ export const useTotalRaceValue = () => {
         totalRaceLaps: 0,
         totalRaceTime: 0,
         adjustedRaceTime: 0,
+        leaderRaceLaps: 0,
     };
 
     // No race, no business
@@ -78,6 +91,21 @@ export const useTotalRaceValue = () => {
             : (classEstLapTimes?.[carIdx] ?? 0) > 0 && classEstLapTimes?.[carIdx] !== undefined
                 ? classEstLapTimes?.[carIdx]
                 : (bestLapTime ?? 0);
+
+    // Leader's race lap count.
+    // - Fixed-lap races: the leader's current position (the race ends when he
+    //   completes totalLaps, so his position is what matters).
+    // - Timed races: projected laps the leader will have completed when the
+    //   race clock reaches 0 (position + timeRemaining / clean on-track pace),
+    //   mirroring the player's projection. Overridden in the timed branch.
+    // When the leader stops reporting telemetry (post-checkered, CarIdxLap=-1),
+    // fall back to the last valid projection.
+    if (leaderLap > 0) {
+        result.leaderRaceLaps =
+            Math.round((leaderLap - 1 + leaderLapDistPct) * 10) / 10;
+    } else if (lastLeaderRaceLaps > 0) {
+        result.leaderRaceLaps = lastLeaderRaceLaps;
+    }
 
 
     if (isFixedLapRace) {
@@ -137,6 +165,21 @@ export const useTotalRaceValue = () => {
         const leaderPace = avgLapTimes[leaderLapTimeIdx] ?? 0;
         const playerPace = avgLapTimes[carIdx] ?? 0;
 
+        // Project the leader's lap count at the moment the race clock reaches
+        // 0 (timeRemaining): current position + laps covered in the remaining
+        // time at his clean on-track pace. This is the timed-race counterpart
+        // of the player's projection (which runs until the leader crosses the
+        // line). Gives a fractional, meaningful value for the fuelLaps widget.
+        if (
+            timeRemaining !== undefined &&
+            timeRemaining >= 0 &&
+            leaderDist > 0 &&
+            leaderPace > 1
+        ) {
+            result.leaderRaceLaps =
+                Math.round((leaderDist + timeRemaining / leaderPace) * 10) / 10;
+        }
+
         if (
             elapsed > 0 &&
             timeRemaining !== undefined &&
@@ -192,13 +235,23 @@ export const useTotalRaceValue = () => {
         }
     }
 
+    // Remember the last valid leader projection so we can keep showing it
+    // once the leader stops reporting telemetry after the checkered flag.
+    if (result.leaderRaceLaps > 0 && result.leaderRaceLaps !== lastLeaderRaceLaps) {
+        setLastLeaderRaceLaps(result.leaderRaceLaps);
+    }
+
     if (state >= SessionState.Checkered) {
         // After checkered: freeze at the lap count captured when the flag was shown
         return {
             isFixedLapRace: isFixedLapRace,
             totalRaceLaps: lap,
             totalRaceTime: result.totalRaceTime,
-            adjustedRaceTime: result.adjustedRaceTime
+            adjustedRaceTime: result.adjustedRaceTime,
+            leaderRaceLaps:
+                result.leaderRaceLaps > 0
+                    ? result.leaderRaceLaps
+                    : lastLeaderRaceLaps
         };
     }
 
