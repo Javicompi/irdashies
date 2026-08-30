@@ -29,5 +29,7 @@ declare global {
     vrAtlasBridge?: {
       reportLayout: (layers: { widgetId: string; sourceRect: [number, number, number, number] }[]) => void;
     };
+    /** VR edit-mode state injected by the main process (VrAtlasContainer). */
+    __vrEdit?: { active?: boolean; id?: string; x?: number; y?: number; z?: number };
   }
 }

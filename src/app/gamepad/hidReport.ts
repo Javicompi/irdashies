@@ -223,7 +223,7 @@ export function buttonChanges(
       state.set(button.index, isDown);
       continue;
     }
-    const wasDown = state.get(button.index)!;
+    const wasDown = state.get(button.index) ?? false;
     if (isDown !== wasDown) {
       changes.push({ index: button.index, down: isDown });
     }
@@ -292,7 +292,7 @@ export function hatChanges(
       state.set(hat.index, direction);
       continue;
     }
-    const previous = state.get(hat.index)!;
+    const previous = state.get(hat.index) ?? null;
 
     if (direction !== previous) {
       if (previous)

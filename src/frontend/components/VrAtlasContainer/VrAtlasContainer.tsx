@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useDashboard, useRunningState } from '@irdashies/context';
 import { getWidget } from '../../WidgetIndex';
 import { WidgetContainer } from '../WidgetContainer';
@@ -25,9 +25,11 @@ export const VrAtlasContainer = memo(() => {
 
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
-  const init = (window as any).__vrEdit as { x?: number; y?: number } | undefined;
+  const init = window.__vrEdit;
   const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: init?.x ?? 0, y: init?.y ?? 0 });
-  const livePosCache = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const [livePosCache, setLivePosCache] = useState<Map<string, { x: number; y: number }>>(
+    new Map()
+  );
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -37,7 +39,12 @@ export const VrAtlasContainer = memo(() => {
       const pos = { x: d.x ?? 0, y: d.y ?? 0 };
       setLivePos(pos);
       // Cache the live position for this widget so it persists after deselection.
-      if (d.id) livePosCache.current.set(d.id, pos);
+      if (d.id)
+        setLivePosCache((prev) => {
+          const next = new Map(prev);
+          next.set(d.id, pos);
+          return next;
+        });
     };
     window.addEventListener('vr-edit-state', handler);
     return () => window.removeEventListener('vr-edit-state', handler);
@@ -75,7 +82,7 @@ const slots = useMemo<AtlasSlot[]>(() => {
         continue;
       }
       // Check the live cache first (positions from this edit session).
-      const cached = livePosCache.current.get(w.id);
+      const cached = livePosCache.get(w.id);
       if (cached) {
         result.push({ widgetId: w.id, x: cached.x, y: cached.y, width: ww, height: wh });
         continue;
@@ -96,7 +103,7 @@ const slots = useMemo<AtlasSlot[]>(() => {
       }
     }
     return result;
-  }, [vrWidgets, livePos, editMode, selectedWidgetId]);
+  }, [vrWidgets, livePos, editMode, selectedWidgetId, atlasWidth, livePosCache]);
 
   // Report the atlas layout to the main process.
   useEffect(() => {
