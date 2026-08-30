@@ -93,7 +93,6 @@ interface FuelStoreActions {
   setQualifyConsumption: (val: number | null) => void;
   setContextInfo: (trackId?: string | number, carName?: string) => void;
   setLapHistory: (laps: FuelLapData[]) => void;
-  setProjectionLaps: (laps: readonly FuelLapData[]) => void;
 }
 
 type FuelStore = FuelStoreState & FuelStoreActions;
@@ -277,28 +276,6 @@ export const useFuelStore = create<FuelStore>()((set, get) => ({
         _oldestLapNumber: oldestLapNumber,
         lastLap:
           laps.length > 0 ? Math.max(...laps.map((l) => l.lapNumber)) : 0,
-      };
-    });
-  },
-
-  setProjectionLaps: (laps) => {
-    set((state) => {
-      const newHistory = new Map(
-        Array.from(state.lapHistory.entries()).filter(
-          ([, lap]) => lap.isHistorical
-        )
-      );
-      for (const lap of laps) {
-        newHistory.set(lap.lapNumber, { ...lap, isHistorical: false });
-      }
-      const lapNumbers = Array.from(newHistory.keys());
-      return {
-        lapHistory: newHistory,
-        _sortedLapHistoryCache: null,
-        _oldestLapNumber:
-          lapNumbers.length > 0 ? Math.min(...lapNumbers) : Infinity,
-        lastLap:
-          lapNumbers.length > 0 ? Math.max(...lapNumbers) : state.lastLap,
       };
     });
   },
