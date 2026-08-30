@@ -1,10 +1,10 @@
-import type { IrSdkBridge, Session, Telemetry } from '@irdashies/types';
+import type { IrSdkSourceBridge, Session, Telemetry } from '@irdashies/types';
 import mockSessionInfo from '../../../irsdk/node/utils/mock-data/session.json';
 import mockTelemetry from '../../../irsdk/node/utils/mock-data/telemetry.json';
 
 export async function generateMockDataFromPath(
   path?: string
-): Promise<IrSdkBridge> {
+): Promise<IrSdkSourceBridge> {
   if (!path) {
     return generateMockData();
   }
@@ -23,7 +23,7 @@ export async function generateMockDataFromPath(
 export function generateMockData(sessionData?: {
   telemetry: Telemetry | Telemetry[];
   sessionInfo: Session | Session[];
-}): IrSdkBridge {
+}): IrSdkSourceBridge {
   let telemetryInterval: NodeJS.Timeout | null = null;
   let sessionInfoInterval: NodeJS.Timeout | null = null;
   let runningStateInterval: NodeJS.Timeout | null = null;
@@ -83,9 +83,9 @@ export function generateMockData(sessionData?: {
   let playerSectorMultipliers = newSectorMultipliers();
   let playerCurrentSectorIdx = getPlayerSectorIdx(mockState.lapDistPct);
 
-  // P2P demo: carIdx 1-4 are overridden to Dallara IR18 (CarID 97) in demo session
+  // P2P demo: carIdx 1-4 are overridden to Dallara IR18 (CarID 99) in demo session
   const P2P_DEMO_CAR_IDXS = [1, 2, 3, 4];
-  const P2P_IR18_CAR_ID = 97;
+  const P2P_IR18_CAR_ID = 99;
 
   // P2P demo telemetry state
   const p2pDemo = {
@@ -408,10 +408,23 @@ export function generateMockData(sessionData?: {
       if (telemetryInterval) clearInterval(telemetryInterval);
       if (sessionInfoInterval) clearInterval(sessionInfoInterval);
       if (runningStateInterval) clearInterval(runningStateInterval);
+      // Null the handles like the per-subscriber unsubscribe paths do —
+      // the "start the interval only once" guards check truthiness, so a
+      // cleared-but-set handle would permanently block re-subscription
+      // after stop().
+      telemetryInterval = null;
+      sessionInfoInterval = null;
+      runningStateInterval = null;
       telemetryCallbacks.clear();
       sessionCallbacks.clear();
       runningStateCallbacks.clear();
     },
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    changeCameraNumber: () => {},
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    changeReplayPosition: () => {},
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    triggerReplaySessionSearch: () => {},
   };
 }
 

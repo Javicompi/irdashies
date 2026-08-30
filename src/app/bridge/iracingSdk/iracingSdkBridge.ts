@@ -1,9 +1,20 @@
 import { IRacingSDK } from '../../irsdk';
 import { OverlayManager } from '../../overlayManager';
 import { TelemetryPerfMetrics } from '../../perfMetrics';
-import type { IrSdkBridge, Session, Telemetry } from '@irdashies/types';
+import {
+  getPerfRunConfig,
+  PERF_REPLAY_READY_LOG_MARKER,
+} from '../../perfRunConfig';
+import {
+  TELEMETRY_INSPECTOR_RATE_HZ,
+  type IrSdkSourceBridge,
+  type Session,
+  type Telemetry,
+} from '@irdashies/types';
 import logger from '../../logger';
 import type { SessionLifecycle } from '../../sessionLifecycle';
+import type { ChannelBus } from '../channelBridge';
+import { createDefaultProcessorHost } from '../../processors/processorRegistry';
 
 // Keys consumed by the renderer. Anything outside this set is dropped before
 // the telemetry object crosses the IPC boundary — reducing structured-clone
@@ -63,7 +74,6 @@ const TELEMETRY_ALLOWLIST = new Set<keyof Telemetry>([
   'LapDeltaToSessionLastlLap_OK',
   'Precipitation',
   'RPM',
-  'RadioTransmitCarIdx',
   'RelativeHumidity',
   'ReplayFrameNum',
   'SessionFlags',
@@ -102,25 +112,62 @@ function trimTelemetry(telemetry: Telemetry): Partial<Telemetry> {
   return trimmed;
 }
 
+const perfRunConfig = getPerfRunConfig();
+const perfTelemetryDeliveryEnabled =
+  !perfRunConfig.enabled || perfRunConfig.telemetryDelivery === 'on';
+const perfRawTelemetryEnabled =
+  perfRunConfig.enabled && perfRunConfig.telemetryPayload === 'raw';
+
+function telemetryForRenderer(
+  telemetry: Telemetry
+): Telemetry | Partial<Telemetry> {
+  return perfRawTelemetryEnabled ? telemetry : trimTelemetry(telemetry);
+}
+
 // Short timeout for waitForData to avoid blocking the main thread.
 // The native SDK's WaitForSingleObject blocks synchronously, so keep this
 // small to keep the event loop responsive.
 const WAIT_TIMEOUT = 16;
 // How long to sleep between connection retry attempts when iRacing isn't running.
 const RETRY_INTERVAL = 1000;
+// How often to ask the SDK for session data. The native getSessionData() copies
+// and transcodes the whole session YAML on every call even when nothing has
+// changed, and currDataVersion only refreshes as a side effect of that call, so
+// there is no cheap way to check first. Polling at 2 Hz bounds session-change
+// detection latency to about 500 ms while avoiding work on every telemetry tick.
+const SESSION_POLL_INTERVAL = 500;
 
 export async function publishIRacingSDKEvents(
   overlayManager: OverlayManager,
-  lifecycle?: SessionLifecycle
-): Promise<IrSdkBridge> {
+  lifecycle?: SessionLifecycle,
+  channelBus?: ChannelBus
+): Promise<IrSdkSourceBridge> {
   logger.info('[iracingSdkBridge] Loading iRacing SDK bridge...');
+  const isTapeReplay = Boolean(process.env.IRDASHIES_TELEMETRY_REPLAY);
+  const sourceName = isTapeReplay ? 'telemetry replay' : 'iRacing';
 
-  const perfMetrics = new TelemetryPerfMetrics();
+  const perfMetrics = new TelemetryPerfMetrics(undefined, channelBus);
   perfMetrics.startReporting();
+  const referenceLapStorage = channelBus
+    ? await import('../../storage/referenceLaps')
+    : undefined;
+  const processorHost =
+    channelBus && referenceLapStorage
+      ? createDefaultProcessorHost({
+          bus: channelBus,
+          lifecycle,
+          metrics: perfMetrics,
+          aggregateReplay: isTapeReplay,
+          logError: (message, error) => logger.error(message, error),
+          referenceLapPersistence: {
+            load: referenceLapStorage.getReferenceLap,
+            save: referenceLapStorage.saveReferenceLap,
+          },
+        })
+      : undefined;
 
   let shouldStop = false;
   let lastRunningState: boolean | undefined = undefined;
-  let latestTelemetry: Telemetry | null = null;
   let latestSession: Session | null = null;
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
@@ -138,12 +185,6 @@ export async function publishIRacingSDKEvents(
         'runningState',
         lastRunningState
       );
-    if (latestTelemetry)
-      overlayManager.publishMessageToOverlay(
-        id,
-        'telemetry',
-        trimTelemetry(latestTelemetry)
-      );
     if (latestSession)
       overlayManager.publishMessageToOverlay(id, 'sessionData', latestSession);
   });
@@ -151,6 +192,12 @@ export async function publishIRacingSDKEvents(
   const sdk = new IRacingSDK();
   sdk.autoEnableTelemetry = true;
   await sdk.ready();
+  if (
+    perfRunConfig.enabled &&
+    (process.env.IRDASHIES_IRSDK_REPLAY === '1' || isTapeReplay)
+  ) {
+    logger.info(PERF_REPLAY_READY_LOG_MARKER);
+  }
 
   // Seed the running state immediately so the renderer doesn't sit on the
   // previous bridge's last value (e.g. a stale demo frame) until the first
@@ -160,8 +207,10 @@ export async function publishIRacingSDKEvents(
   overlayManager.publishMessage('runningState', initialRunningState);
   runningStateCallbacks.forEach((callback) => callback(initialRunningState));
 
-  const runningStateInterval = setInterval(() => {
-    const isSimRunning = sdk.sessionStatusOK;
+  // Publishes a change once, whoever notices it first. The telemetry loop
+  // calls this the moment it has data, so overlays are not left believing the
+  // sim is down until the poll below next runs.
+  const publishRunningState = (isSimRunning: boolean) => {
     if (isSimRunning === lastRunningState) {
       return;
     }
@@ -172,51 +221,115 @@ export async function publishIRacingSDKEvents(
     );
     overlayManager.publishMessage('runningState', isSimRunning);
     runningStateCallbacks.forEach((callback) => callback(isSimRunning));
+  };
+
+  const runningStateInterval = setInterval(() => {
+    publishRunningState(sdk.sessionStatusOK);
   }, 5000);
 
   // Start the telemetry loop in the background
   (async () => {
     while (!shouldStop) {
       let lastSessionVersion = -1;
-      let lastSessionPublishTime = 0;
+      let lastInspectorTelemetryPublishTime = Number.NEGATIVE_INFINITY;
+      // Negative infinity makes the first tick fetch and publish immediately.
+      let lastSessionPollTime = Number.NEGATIVE_INFINITY;
       let wasRunning = false;
 
-      while (!shouldStop && sdk.waitForData(WAIT_TIMEOUT)) {
+      while (!shouldStop) {
+        const pollStartedAt = performance.now();
+        const hasNewData = sdk.waitForData(WAIT_TIMEOUT);
+        if (!hasNewData) {
+          // A paused replay remains connected but does not advance the SDK's
+          // telemetry buffer. Keep the current session and channel snapshots
+          // until either playback resumes or the SDK actually disconnects.
+          if (sdk.sessionStatusOK) {
+            const remainingDelay = Math.max(
+              0,
+              1000 / 25 - (performance.now() - pollStartedAt)
+            );
+            await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+            continue;
+          }
+          break;
+        }
         if (!wasRunning) {
-          logger.info('[iracingSdkBridge] iRacing is running');
+          logger.info(`[iracingSdkBridge] ${sourceName} is running`);
           wasRunning = true;
+          // sessionStatusOK can still read false when the bridge seeds it, so
+          // the arrival of real data is the earliest reliable proof the sim is
+          // up. Without this the overlays wait out the 5s poll before showing
+          // anything.
+          publishRunningState(true);
+          lifecycle?._onEnter({ replay: isTapeReplay });
         }
         perfMetrics.markStart('processTelemetry');
+        perfMetrics.markStart('sdkTelemetryRead');
         const telemetry = sdk.getTelemetry();
-        const session = sdk.getSessionData();
+        perfMetrics.markEnd('sdkTelemetryRead');
+        const tickTime = performance.now();
+        let session: Session | null = null;
+        if (tickTime - lastSessionPollTime >= SESSION_POLL_INTERVAL) {
+          lastSessionPollTime = tickTime;
+          perfMetrics.markStart('sdkSessionRead');
+          session = sdk.getSessionData();
+          perfMetrics.markEnd('sdkSessionRead');
+        }
 
         if (telemetry) {
-          latestTelemetry = telemetry;
+          perfMetrics.markStart('lifecycleTelemetry');
           lifecycle?._onTelemetry(telemetry);
-          perfMetrics.markStart('broadcast');
-          overlayManager.publishMessage('telemetry', trimTelemetry(telemetry));
-          perfMetrics.markEnd('broadcast');
+          perfMetrics.markEnd('lifecycleTelemetry');
+          processorHost?.onFrame(telemetry);
+          if (perfTelemetryDeliveryEnabled) {
+            // Raw telemetry for renderer-side widgets (fuel calculator, VR
+            // atlas, input trace). Delivery is subscription-gated per window
+            // in overlayManager, so only subscribed renderers receive it.
+            perfMetrics.markStart('telemetryProjection');
+            const rendererTelemetry = telemetryForRenderer(telemetry);
+            perfMetrics.markEnd('telemetryProjection');
+            perfMetrics.markStart('broadcast');
+            overlayManager.publishMessage('telemetry', rendererTelemetry);
+            perfMetrics.markEnd('broadcast');
+          }
+          if (
+            perfTelemetryDeliveryEnabled &&
+            overlayManager.hasTelemetryInspectorSubscribers() &&
+            tickTime - lastInspectorTelemetryPublishTime >=
+              1000 / TELEMETRY_INSPECTOR_RATE_HZ
+          ) {
+            lastInspectorTelemetryPublishTime = tickTime;
+            perfMetrics.markStart('telemetryProjection');
+            const rendererTelemetry = telemetryForRenderer(telemetry);
+            perfMetrics.markEnd('telemetryProjection');
+            perfMetrics.markStart('broadcast');
+            overlayManager.publishMessage(
+              'telemetryInspector:telemetry',
+              rendererTelemetry
+            );
+            perfMetrics.markEnd('broadcast');
+          }
+          perfMetrics.markStart('telemetryCallbacks');
           telemetryCallbacks.forEach((callback) => callback(telemetry));
+          perfMetrics.markEnd('telemetryCallbacks');
         }
 
         if (session) {
-          // Only publish the session data if it has changed or if 1 second has passed since the last publish
-          const now = Date.now();
-          const timeSinceLastPublish = now - lastSessionPublishTime;
-          if (
-            sdk.currDataVersion !== lastSessionVersion ||
-            timeSinceLastPublish >= 1000
-          ) {
+          // Session YAML is large. Publish it only when the SDK revision changes;
+          // late subscribers are seeded from latestSession below.
+          if (sdk.currDataVersion !== lastSessionVersion) {
+            perfMetrics.markStart('sessionPublish');
             lastSessionVersion = sdk.currDataVersion;
-            lastSessionPublishTime = now;
             latestSession = session;
             lifecycle?._onSession(session);
+            processorHost?.onSession(session);
             overlayManager.publishMessage('sessionData', session);
             sessionCallbacks.forEach((callback) => callback(session));
+            perfMetrics.markEnd('sessionPublish');
           }
         }
         perfMetrics.markEnd('processTelemetry');
-        perfMetrics.tick();
+        perfMetrics.tick(telemetry);
 
         // Throttling to ~25Hz to save system resources as requested.
         // We sleep AFTER publishing to ensure each frame is sent with minimal latency.
@@ -225,14 +338,14 @@ export async function publishIRacingSDKEvents(
 
       if (wasRunning) {
         logger.info(
-          '[iracingSdkBridge] iRacing is no longer publishing telemetry'
+          `[iracingSdkBridge] ${sourceName} is no longer publishing telemetry`
         );
         // Release the last telemetry/session snapshots so new overlay windows
         // opened during a disconnect don't get re-seeded with stale data, and
         // so the references don't sit in main-process memory indefinitely.
         // They get repopulated on the next successful waitForData tick.
-        latestTelemetry = null;
         latestSession = null;
+        overlayManager.clearLatestSessionData?.();
         lifecycle?._onDisconnect();
       }
 
@@ -249,6 +362,7 @@ export async function publishIRacingSDKEvents(
     },
     onSessionData: (callback: (value: Session) => void) => {
       sessionCallbacks.add(callback);
+      if (latestSession) callback(latestSession);
       return () => {
         sessionCallbacks.delete(callback);
       };
@@ -261,11 +375,20 @@ export async function publishIRacingSDKEvents(
     },
     stop: () => {
       shouldStop = true;
+      overlayManager.clearLatestSessionData?.();
+      sdk.stopSDK();
       clearInterval(runningStateInterval);
       telemetryCallbacks.clear();
       sessionCallbacks.clear();
       runningStateCallbacks.clear();
+      processorHost?.dispose();
       perfMetrics.stopReporting();
     },
+    changeCameraNumber: (carNumber, group, camera) =>
+      sdk.changeCameraNumber(carNumber, group, camera),
+    changeReplayPosition: (position, frame) =>
+      sdk.changeReplayPosition(position, frame),
+    triggerReplaySessionSearch: (sessionNum, sessionTimeMs) =>
+      sdk.triggerReplaySessionSearch(sessionNum, sessionTimeMs),
   };
 }

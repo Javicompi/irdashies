@@ -1,13 +1,77 @@
 import { Meta, StoryObj } from '@storybook/react-vite';
+import type { ComponentType } from 'react';
 import { SessionBar } from './SessionBar';
 import { getIncidentDisplay } from './getIncidentDisplay';
-import { TelemetryDecorator } from '../../../../../../.storybook/telemetryDecorator';
+import {
+  ChannelSnapshotDecorator,
+  TelemetryDecorator,
+} from '@irdashies/storybook';
 import { getWidgetDefaultConfig } from '@irdashies/types';
+import { SessionTimingStoreUpdater } from '@irdashies/context';
 
 export default {
   component: SessionBar,
   title: 'widgets/Standings/components/SessionBar',
-  decorators: [TelemetryDecorator()],
+  decorators: [
+    TelemetryDecorator(),
+    ChannelSnapshotDecorator({
+      'session-bar.snapshot': {
+        sessionName: 'Race',
+        trackDisplayName: 'Okayama International Circuit',
+        displayUnits: 1,
+        brakeBias: 52.4,
+        brakeBiasIsClio: false,
+        incidents: 2,
+        incidentLimit: 17,
+        trackWetness: 1,
+        precipitation: 0,
+        airTemp: 24,
+        trackTemp: 31,
+        windDirection: 1,
+        windVelocity: 3,
+        windYaw: 0,
+        fuelLevel: 32.5,
+        lastLapTime: 92.4,
+        bestLapTime: 91.8,
+        sessionBestLap: 90.9,
+        sessionTimeOfDay: 43200,
+        playerCarIdx: 0,
+        playerCarId: 67,
+        playerClassified: true,
+        playerOverallPosition: 2,
+        playerClassPosition: 2,
+        playerClassSize: 12,
+        competitorCarIds: [67],
+        competitorPositions: [2],
+        lastLapTopSpeed: 58,
+        sessionBestTopSpeed: 60,
+        sessionNum: 0,
+        version: 1,
+      },
+      'session-timing.snapshot': {
+        sessionType: 'Race',
+        state: 4,
+        currentLap: 8,
+        totalLaps: 20,
+        time: 960,
+        timeTotal: 2400,
+        timeRemaining: 1440,
+        greenFlagTimestamp: 0,
+        isFixedLapRace: true,
+        totalRaceLaps: 20,
+        totalRaceTime: 2400,
+        adjustedRaceTime: 2400,
+        sessionNum: 0,
+        version: 1,
+      },
+    }),
+    (Story: ComponentType) => (
+      <>
+        <SessionTimingStoreUpdater enabled={true} />
+        <Story />
+      </>
+    ),
+  ],
 } as Meta;
 
 type Story = StoryObj<typeof SessionBar>;
@@ -17,6 +81,82 @@ const standingsDefaults = getWidgetDefaultConfig('standings');
 export const Primary: Story = {
   args: {
     settings: standingsDefaults.headerBar,
+    position: 'header',
+  },
+};
+
+export const FuelLevelMetric: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      fuelLevel: { enabled: true },
+      displayOrder: ['fuelLevel'],
+    },
+    position: 'header',
+  },
+};
+
+export const FuelLevelWithOtherItems: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      sessionName: { enabled: true },
+      sessionLaps: { enabled: true },
+      incidentCount: { enabled: true },
+      fuelLevel: { enabled: true },
+      displayOrder: [
+        'sessionName',
+        'sessionLaps',
+        'incidentCount',
+        'fuelLevel',
+      ],
+    },
+    position: 'header',
+  },
+};
+
+export const LastLap: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      lastLap: { enabled: true },
+      displayOrder: ['lastLap'],
+    },
+    position: 'header',
+  },
+};
+
+export const BestLap: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      bestLap: { enabled: true },
+      displayOrder: ['bestLap'],
+    },
+    position: 'header',
+  },
+};
+
+export const TopSpeed: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      topSpeed: { enabled: true },
+      displayOrder: ['topSpeed'],
+    },
+    position: 'header',
+  },
+};
+
+export const LapTimesWithOtherItems: Story = {
+  args: {
+    settings: {
+      ...standingsDefaults.headerBar,
+      lastLap: { enabled: true },
+      bestLap: { enabled: true },
+      incidentCount: { enabled: true },
+      displayOrder: ['incidentCount', 'lastLap', 'bestLap'],
+    },
     position: 'header',
   },
 };

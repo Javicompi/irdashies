@@ -6,12 +6,23 @@ import {
 } from 'electron';
 import type { DashboardLayout, ContainerBoundsInfo } from '@irdashies/types';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Notification } from 'electron';
 import { readData, writeData } from './storage/storage';
 import { getDashboard } from './storage/dashboards';
 import { getChromiumFlags, parseCustomSwitches } from './storage/chromiumFlags';
-import { trackSettingsWindowMovement } from './trackWindowMovement';
+import {
+  markCorrectedBounds,
+  trackSettingsWindowMovement,
+} from './trackWindowMovement';
+import { sanitizeWindowBounds } from './windowBounds';
 import logger from './logger';
+import { createRendererPerfArguments } from './perfRendererArguments';
+import {
+  refreshSessionDataForVisibleWindow,
+  type RendererDataSubscriptions,
+} from './rendererDataVisibility';
+import { hardenWindow } from './hardenWindow';
 
 // used for Hot Module Replacement
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -30,6 +41,23 @@ const isAllowedGuestHost = (urlStr: string): boolean => {
   }
 };
 
+/**
+ * Baseline hardening for every window that loads the app preload: deny popups
+ * (external links go to the system browser) and refuse to navigate away from
+ * the bundle.
+ */
+function applyBaselineSecurity(window: BrowserWindow, label: string): void {
+  const rendererPath = path.join(
+    __dirname,
+    `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`
+  );
+  hardenWindow(window, {
+    devServerUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL,
+    packagedRendererUrl: pathToFileURL(rendererPath).href,
+    label,
+  });
+}
+
 function getIconPath(): string {
   const isDev = !!MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const basePath = isDev
@@ -44,6 +72,9 @@ export class OverlayManager {
   private displayBoundsInfo = new Map<number, ContainerBoundsInfo>();
   private displayFullBounds = new Map<number, Electron.Rectangle>();
   private currentSettingsWindow: BrowserWindow | undefined;
+  private gantryWindow: BrowserWindow | undefined;
+  /** Last-applied enabled state, so syncGantryWindow only acts on changes. */
+  private gantryEnabled = false;
   private currentDashboard: DashboardLayout | undefined;
   private desktopSuppressed = false;
   private isLocked = true;
@@ -52,6 +83,8 @@ export class OverlayManager {
   private overlayAlwaysOnTop = true;
   private hasSingleInstanceLock = false;
   private onWindowReadyCallbacks = new Set<(windowId: string) => void>();
+  private rendererDataSubscriptions?: RendererDataSubscriptions;
+  private latestSessionData: unknown;
 
   /** Padding around the widget bounding box when shrink-wrapping */
   private static readonly SHRINK_WRAP_PADDING = 20;
@@ -78,7 +111,10 @@ export class OverlayManager {
   /**
    * Create one overlay window per display
    */
-  public createOverlays(dashboardLayout: DashboardLayout): void {
+  public createOverlays(
+    dashboardLayout: DashboardLayout,
+    options: { createSettingsWindow?: boolean } = {}
+  ): void {
     this.currentDashboard = dashboardLayout;
     if (this.desktopSuppressed) return;
     const { generalSettings } = dashboardLayout;
@@ -130,8 +166,13 @@ export class OverlayManager {
       this.createWindowForDisplay(display, isPrimary);
     }
 
-    const startMinimized = generalSettings?.startMinimized ?? false;
-    this.createSettingsWindow(undefined, { startHidden: startMinimized });
+    if (options.createSettingsWindow !== false) {
+      const startMinimized = generalSettings?.startMinimized ?? false;
+      this.createSettingsWindow(undefined, { startHidden: startMinimized });
+    }
+
+    // Separate framed window, only created when the Gantry widget is enabled.
+    this.syncGantryWindow(dashboardLayout);
   }
 
   /**
@@ -181,6 +222,7 @@ export class OverlayManager {
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         backgroundThrottling: false,
+        additionalArguments: createRendererPerfArguments(),
         // Enables the <webview> used by the Heart Rate widget to embed
         // HypeRate's overlay and inject transparent-background CSS (the same
         // technique OBS uses). Global-by-design: webPreferences are fixed at
@@ -194,6 +236,8 @@ export class OverlayManager {
     });
 
     browserWindow.setBounds(expectedBounds);
+
+    applyBaselineSecurity(browserWindow, `Display ${display.id}`);
 
     // Harden the <webview> used by the Heart Rate widget: keep the guest on
     // secure defaults and only allow HypeRate hosts to attach.
@@ -244,7 +288,13 @@ export class OverlayManager {
     }
 
     this.displayWindows.set(display.id, browserWindow);
-
+    browserWindow.on('show', () => {
+      refreshSessionDataForVisibleWindow(
+        browserWindow,
+        this.rendererDataSubscriptions,
+        this.latestSessionData
+      );
+    });
     browserWindow.on('closed', () => {
       logger.info(`Display ${display.id} overlay window closed`);
       this.displayWindows.delete(display.id);
@@ -533,6 +583,7 @@ export class OverlayManager {
    */
   // High-frequency messages that only the overlay container needs
   private static readonly OVERLAY_ONLY_MESSAGES = new Set([
+    'telemetryInspector:telemetry',
     'telemetry',
     'runningState',
   ]);
@@ -565,9 +616,31 @@ export class OverlayManager {
   }
 
   public publishMessage(key: string, value: unknown): void {
+    if (key === 'sessionData') this.latestSessionData = value;
+
+    // Bulk streams are subscription-gated per window: only renderers that
+    // explicitly subscribed (raw telemetry, telemetry inspector, session data)
+    // receive them, so closed or uninterested windows cost nothing.
+    const bulkStreamOf = (k: string) =>
+      k === 'telemetryInspector:telemetry'
+        ? 'telemetryInspector'
+        : k === 'sessionData'
+          ? 'sessionData'
+          : k === 'telemetry'
+            ? 'telemetry'
+            : undefined;
+
     // Send to all display overlay windows
     for (const win of this.displayWindows.values()) {
       if (win.isDestroyed()) continue;
+      const bulkStream = bulkStreamOf(key);
+      if (bulkStream && !win.isVisible()) continue;
+      if (
+        bulkStream &&
+        !this.rendererDataSubscriptions?.has(win.webContents.id, bulkStream)
+      ) {
+        continue;
+      }
       try {
         win.webContents.send(key, value);
       } catch (e) {
@@ -578,10 +651,44 @@ export class OverlayManager {
     // Send to external (non-bounds-managed) windows, e.g. the VR overlay.
     for (const win of this.externalWindows) {
       if (win.isDestroyed()) continue;
+      const bulkStream = bulkStreamOf(key);
+      if (
+        bulkStream &&
+        !this.rendererDataSubscriptions?.has(win.webContents.id, bulkStream)
+      ) {
+        continue;
+      }
       try {
         win.webContents.send(key, value);
       } catch (e) {
         logger.error(`Failed to send message ${key} to external window`, e);
+      }
+    }
+
+    // The Gantry consumes telemetry and session data, so it is forwarded
+    // everything — before the settings-window guard below.
+    // The Gantry consumes telemetry and session data, so it is forwarded
+    // everything — before the settings-window guard below.
+    if (this.gantryWindow && !this.gantryWindow.isDestroyed()) {
+      const bulkStream =
+        key === 'telemetryInspector:telemetry'
+          ? 'telemetryInspector'
+          : key === 'sessionData'
+            ? 'sessionData'
+            : undefined;
+      const shouldSend =
+        !bulkStream ||
+        (this.gantryWindow.isVisible() &&
+          this.rendererDataSubscriptions?.has(
+            this.gantryWindow.webContents.id,
+            bulkStream
+          ));
+      if (shouldSend) {
+        try {
+          this.gantryWindow.webContents.send(key, value);
+        } catch (e) {
+          logger.error(`Failed to send message ${key} to gantry window`, e);
+        }
       }
     }
 
@@ -601,6 +708,22 @@ export class OverlayManager {
         logger.error(`Failed to send message ${key} to settings window`, e);
       }
     }
+  }
+
+  public setRendererDataSubscriptions(
+    subscriptions: RendererDataSubscriptions
+  ): void {
+    this.rendererDataSubscriptions = subscriptions;
+  }
+
+  public clearLatestSessionData(): void {
+    this.latestSessionData = undefined;
+  }
+
+  public hasTelemetryInspectorSubscribers(): boolean {
+    return (
+      this.rendererDataSubscriptions?.hasAny('telemetryInspector') ?? false
+    );
   }
 
   /**
@@ -687,6 +810,11 @@ export class OverlayManager {
       this.currentSettingsWindow = undefined;
     }
 
+    if (this.gantryWindow && !this.gantryWindow.isDestroyed()) {
+      this.gantryWindow.destroy();
+      this.gantryWindow = undefined;
+    }
+
     app.quit();
   }
 
@@ -743,6 +871,9 @@ export class OverlayManager {
   public closeOrCreateWindows(dashboardLayout?: DashboardLayout): void {
     if (dashboardLayout) {
       this.ensureDisplayWindows(dashboardLayout);
+      // The Gantry is not an OverlayContainer widget, so it has to be opened
+      // and closed here rather than by the renderer toggling visibility.
+      this.syncGantryWindow(dashboardLayout);
       return;
     }
     if (this.displayWindows.size === 0) {
@@ -835,7 +966,7 @@ export class OverlayManager {
     }
 
     // customSwitches is already allowlist-filtered in getChromiumFlags()
-    // (see docs/ARCHITECTURE_REVIEW.md finding S1). Anything unsafe was
+    // (see the archived 2026 architecture review, finding S1). Anything unsafe was
     // dropped at the storage normalisation step; parsing here is a clean,
     // structural pass over the safe subset.
     for (const { name, value } of parseCustomSwitches(
@@ -911,6 +1042,122 @@ export class OverlayManager {
     return this.hasSingleInstanceLock;
   }
 
+  /**
+   * The Gantry is a framed, interactive race-control window rather than a
+   * transparent click-through overlay, so it gets its own BrowserWindow on the
+   * `#/gantry` route instead of being rendered by the OverlayContainer.
+   * No-op unless the Gantry widget is enabled in the dashboard.
+   */
+  /**
+   * Open (or focus) the Gantry window.
+   *
+   * @returns `false` when the Gantry widget is disabled and nothing was
+   * opened, so callers — notably the Settings "Show Window" button — can say
+   * why instead of silently doing nothing.
+   */
+  public createGantryWindow(dashboardLayout?: DashboardLayout): boolean {
+    const gantryWidget = dashboardLayout?.widgets.find(
+      (w) => w.id === 'gantry'
+    );
+    if (!gantryWidget?.enabled) {
+      logger.info(
+        '[OverlayManager] Gantry window requested but the widget is disabled'
+      );
+      return false;
+    }
+
+    if (this.gantryWindow && !this.gantryWindow.isDestroyed()) {
+      if (this.gantryWindow.isMinimized()) this.gantryWindow.restore();
+      this.gantryWindow.show();
+      this.gantryWindow.focus();
+      return true;
+    }
+
+    const browserWindow = new BrowserWindow({
+      title: 'irDashies - Gantry',
+      frame: true,
+      width: 1400,
+      height: 800,
+      autoHideMenuBar: true,
+      icon: getIconPath(),
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        backgroundThrottling: false,
+      },
+    });
+
+    this.gantryWindow = browserWindow;
+    applyBaselineSecurity(browserWindow, 'Gantry');
+
+    browserWindow.once('ready-to-show', () => {
+      if (browserWindow.isDestroyed()) return;
+      browserWindow.show();
+    });
+
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      browserWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/gantry`);
+    } else {
+      browserWindow.loadFile(
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+        { hash: '/gantry' }
+      );
+    }
+
+    browserWindow.on('closed', () => {
+      this.gantryWindow = undefined;
+    });
+
+    // Without this a renderer crash leaves a live-but-blank BrowserWindow that
+    // still receives every publishMessage, and the stale reference makes the
+    // next create call early-return on it.
+    browserWindow.webContents.on('render-process-gone', (_event, details) => {
+      logger.error(
+        `[OverlayManager] Renderer process gone for Gantry: reason=${details.reason}, exitCode=${details.exitCode}`
+      );
+      if (this.gantryWindow === browserWindow) {
+        this.gantryWindow = undefined;
+      }
+      if (!browserWindow.isDestroyed()) browserWindow.destroy();
+      if (this.isQuitting) return;
+
+      setTimeout(() => {
+        if (this.isQuitting) return;
+        logger.info('[OverlayManager] Recreating Gantry renderer');
+        this.createGantryWindow(this.currentDashboard);
+      }, 1000);
+    });
+
+    return true;
+  }
+
+  /**
+   * Bring the Gantry window in line with the dashboard: open it when the widget
+   * is enabled, close it when it isn't. Called on every dashboard update, so
+   * toggling the widget or switching profile takes effect without a restart.
+   */
+  public syncGantryWindow(dashboardLayout?: DashboardLayout): void {
+    const enabled = !!dashboardLayout?.widgets.find((w) => w.id === 'gantry')
+      ?.enabled;
+    const wasEnabled = this.gantryEnabled;
+    this.gantryEnabled = enabled;
+
+    if (enabled) {
+      // Open on the disabled -> enabled edge only. A window the user closed by
+      // hand should stay closed while they edit unrelated settings.
+      if (!wasEnabled) this.createGantryWindow(dashboardLayout);
+      return;
+    }
+
+    if (this.gantryWindow && !this.gantryWindow.isDestroyed()) {
+      logger.info(
+        '[OverlayManager] Closing Gantry window — widget disabled in the active dashboard'
+      );
+      this.gantryWindow.destroy();
+    }
+    this.gantryWindow = undefined;
+  }
+
   public createSettingsWindow(
     widgetType?: string,
     options?: { startHidden?: boolean }
@@ -953,11 +1200,18 @@ export class OverlayManager {
     );
 
     this.currentSettingsWindow = browserWindow;
+    applyBaselineSecurity(browserWindow, 'Settings');
 
     // Reveal the window once its content is ready, unless it should start
     // minimized to the system tray (the "Start minimized" general setting).
     browserWindow.once('ready-to-show', () => {
-      if (browserWindow.isDestroyed() || startHidden) return;
+      if (browserWindow.isDestroyed()) return;
+
+      // Runs before the startHidden check: a window that starts in the tray is
+      // shown later, and would otherwise be revealed somewhere unreachable.
+      ensureWindowOnScreen(browserWindow);
+
+      if (startHidden) return;
       browserWindow.show();
       browserWindow.focus();
     });
@@ -1003,6 +1257,61 @@ export class OverlayManager {
   }
 }
 
+/**
+ * Correct a window that has ended up where no display covers it.
+ *
+ * Validating the saved bounds on the way in only guards the restore path. This
+ * checks where the window actually landed, so it also catches a window placed
+ * off-screen by something other than a stale saved position — Electron's own
+ * default placement, or a display set that was not fully enumerated when the
+ * window was created. #539 was reported on a freshly installed Windows with no
+ * saved bounds at all, which the restore-path check cannot explain, so the
+ * guard is deliberately cause-agnostic: it asks only whether the window can be
+ * reached, never why it could not be.
+ */
+function ensureWindowOnScreen(browserWindow: BrowserWindow): void {
+  const actual = browserWindow.getBounds();
+  const corrected = sanitizeWindowBounds(
+    actual,
+    screen.getAllDisplays().map((display) => display.workArea),
+    screen.getPrimaryDisplay().workArea
+  );
+
+  if (!corrected) return;
+  if (corrected.x === actual.x && corrected.y === actual.y) return;
+
+  logger.warn(
+    `[OverlayManager] Settings window opened off-screen at x=${actual.x}, ` +
+      `y=${actual.y}; moved to x=${corrected.x}, y=${corrected.y}`
+  );
+
+  // Flagged before the move so the saved position survives it. Rescuing a
+  // window must not overwrite where the user put it, or reconnecting the
+  // monitor would no longer bring it back.
+  markCorrectedBounds(browserWindow, corrected);
+  browserWindow.setBounds(corrected);
+}
+
 function loadWindowBounds(): Electron.Rectangle | undefined {
-  return readData<Electron.Rectangle>('settingsWindowBounds');
+  const saved = readData<Electron.Rectangle>('settingsWindowBounds');
+  if (!saved) return undefined;
+
+  // Saved bounds outlive the display arrangement that produced them, so they
+  // are validated against the displays connected right now — otherwise a
+  // window saved on a monitor that has since been unplugged or rearranged is
+  // restored somewhere unreachable.
+  const bounds = sanitizeWindowBounds(
+    saved,
+    screen.getAllDisplays().map((display) => display.workArea),
+    screen.getPrimaryDisplay().workArea
+  );
+
+  if (bounds && (bounds.x !== saved.x || bounds.y !== saved.y)) {
+    logger.info(
+      `[OverlayManager] Saved settings window bounds were off-screen ` +
+        `(x=${saved.x}, y=${saved.y}); moved to x=${bounds.x}, y=${bounds.y}`
+    );
+  }
+
+  return bounds;
 }

@@ -19,9 +19,11 @@ import { LapTimeLog } from './components/LapTimeLog/LapTimeLog';
 import { InformationBar } from './components/InformationBar/InformationBar';
 import { SlowCarAhead } from './components/SlowCarAhead/SlowCarAhead';
 import { SectorDelta } from './components/SectorDelta/SectorDelta';
+import { DeltaSpeed } from './components/DeltaSpeed/DeltaSpeed';
 import { HeartRate } from './components/HeartRate/HeartRate';
 import { CornerNameOverlay } from './components/CornerNameOverlay';
 import { Battle } from './components/Battle/Battle';
+import { Gantry } from './components/Gantry/Gantry';
 import type { WidgetConfigMap } from '@irdashies/types';
 import type { ElementType } from 'react';
 
@@ -47,9 +49,11 @@ export {
   InformationBar,
   SlowCarAhead,
   SectorDelta,
+  DeltaSpeed,
   HeartRate,
   CornerNameOverlay,
   Battle,
+  Gantry,
 };
 
 export const WIDGET_MAP: Record<keyof WidgetConfigMap, ElementType> = {
@@ -74,9 +78,11 @@ export const WIDGET_MAP: Record<keyof WidgetConfigMap, ElementType> = {
   infobar: InformationBar,
   slowcarahead: SlowCarAhead,
   sectordelta: SectorDelta,
+  deltaspeed: DeltaSpeed,
   heartrate: HeartRate,
   cornername: CornerNameOverlay,
   battle: Battle,
+  gantry: Gantry,
 };
 
 export type WidgetId = keyof WidgetConfigMap;

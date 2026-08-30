@@ -1,9 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import {
-  useSessionVisibility,
-  useTelemetryValue,
-  useDashboard,
-} from '@irdashies/context';
+import { useDashboard, useFuelProjectionSnapshot } from '@irdashies/context';
 import { useFuelCalculation } from './useFuelCalculation';
 import {
   FuelCalculatorHeader,
@@ -16,6 +12,7 @@ import {
   FuelCalculatorTargetMessage,
   FuelCalculatorConfidence,
   FuelCalculatorEconomyPredict,
+  FuelCalculatorFinishFuel,
 } from './widgets/FuelCalculatorWidgets';
 import type { FuelCalculatorSettings, FuelCalculation } from './types';
 import type { LayoutNode } from '@irdashies/types';
@@ -24,7 +21,10 @@ import {
   defaultFuelCalculatorSettings,
 } from './defaults';
 
-type FuelCalculatorProps = Partial<FuelCalculatorSettings>;
+type FuelCalculatorProps = Partial<FuelCalculatorSettings> & {
+  /** Deterministic data for Storybook previews. Not persisted in widget settings. */
+  previewData?: FuelCalculation;
+};
 
 const EMPTY_DATA: FuelCalculation = {
   fuelLevel: 0,
@@ -70,7 +70,21 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
 
   const { fuelUnits, safetyMargin } = settings;
 
-  const isSessionVisible = useSessionVisibility(settings.sessionVisibility);
+  const projection = useFuelProjectionSnapshot();
+  const visibilityKey = projection?.sessionType
+    ? {
+        Race: 'race',
+        'Lone Qualify': 'loneQualify',
+        'Open Qualify': 'openQualify',
+        Practice: 'practice',
+        'Offline Testing': 'offlineTesting',
+      }[projection.sessionType]
+    : undefined;
+  const isSessionVisible = visibilityKey
+    ? (settings.sessionVisibility?.[
+        visibilityKey as keyof typeof settings.sessionVisibility
+      ] ?? true)
+    : true;
 
   // Derived Settings based on General linkage
   // Use the full string so compact vs ultra can be distinguished downstream
@@ -146,11 +160,12 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
     return DEFAULT_FUEL_LAYOUT_TREE;
   }, [settings.layoutTree]);
 
-  const isOnTrack = useTelemetryValue('IsOnTrack');
+  const isOnTrack = projection?.isOnTrack ?? false;
 
-  const fuelData = useFuelCalculation(safetyMargin, settings);
+  const calculatedFuelData = useFuelCalculation(safetyMargin, settings);
+  const fuelData = props.previewData ?? calculatedFuelData;
 
-  const currentFuelLevel = useTelemetryValue('FuelLevel');
+  const currentFuelLevel = projection?.fuelLevel;
 
   const predictiveUsage = fuelData?.projectedLapUsage || 0;
   const qualifyConsumption = fuelData?.maxQualify || null;
@@ -276,6 +291,14 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
             displayData={displayData}
           />
         );
+      case 'fuelAtFinish':
+        return (
+          <FuelCalculatorFinishFuel
+            {...widgetProps}
+            fuelData={frozenFuelData}
+            displayData={frozenDisplayData}
+          />
+        );
       default:
         return null;
     }
@@ -297,7 +320,7 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
               <div
                 key={widgetId}
                 data-widget-id={widgetId}
-                className="flex-1 min-w-0 flex flex-col w-full"
+                className={`min-w-0 flex flex-col w-full ${isHorizontalBox ? 'flex-1' : 'flex-none'}`}
               >
                 {renderWidget(widgetId)}
               </div>
@@ -323,37 +346,25 @@ export const FuelCalculator = (props: FuelCalculatorProps) => {
   const currentFuelStatus = displayData.fuelStatus || 'safe';
   const showFuelStatusBorder = settings.showFuelStatusBorder ?? true;
 
-  // Extract hex codes for inline style
-  const borderColorValue = showFuelStatusBorder
-    ? currentFuelStatus === 'caution'
-      ? '#f97316'
-      : currentFuelStatus === 'danger'
+  // A safe fuel state is the normal state, not an alert. Keep the shell quiet
+  // like Standings/Relative, and reserve colour for a warning that needs action.
+  const borderColorValue =
+    showFuelStatusBorder && currentFuelStatus === 'caution'
+      ? '#f59e0b'
+      : showFuelStatusBorder && currentFuelStatus === 'danger'
         ? '#ef4444'
-        : '#22c55e'
-    : 'transparent'; // Neutral inactive border
-
-  const shadowColorValue =
-    currentFuelStatus === 'caution'
-      ? 'rgba(249, 115, 22, 0.3)'
-      : currentFuelStatus === 'danger'
-        ? 'rgba(239, 68, 68, 0.3)'
-        : 'rgba(34, 197, 94, 0.3)';
+        : 'transparent';
 
   const borderWidth =
-    derivedCompactMode !== 'off' ? 'border border-transparent' : 'border-2';
+    derivedCompactMode !== 'off' ? 'border border-transparent' : 'border';
   const paddingClass = derivedCompactMode !== 'off' ? '' : 'p-2';
 
   return (
     <div
-      className={`relative w-full flex flex-col ${borderWidth} box-border transition-colors duration-500 rounded-sm bg-slate-800/(--bg-opacity) overflow-hidden ${paddingClass}`}
+      className={`relative w-full flex flex-col ${borderWidth} box-border transition-colors duration-300 rounded-sm bg-slate-800/(--bg-opacity) text-white overflow-hidden ${paddingClass}`}
       style={{
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         ['--bg-opacity' as string]: `${settings?.background?.opacity ?? 0}%`,
         borderColor: borderColorValue,
-        boxShadow: showFuelStatusBorder
-          ? `0 0 15px ${shadowColorValue} inset`
-          : 'none',
       }}
     >
       {layoutTree ? (

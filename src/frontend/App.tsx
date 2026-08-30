@@ -2,12 +2,14 @@
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 import {
-  TelemetryProvider,
   DashboardProvider,
   RunningStateProvider,
   SessionProvider,
+  TelemetryProvider,
   PitLaneProvider,
   ReferenceStoreProvider,
+  useRunningState,
+  useResetOnDisconnect,
 } from '@irdashies/context';
 import { Settings } from './components/Settings/Settings';
 import { ThemeManager } from './components/ThemeManager/ThemeManager';
@@ -16,6 +18,9 @@ import { ProfileSwitchOverlay } from './components/ProfileSwitchOverlay/ProfileS
 import { OverlayContainer } from './components/OverlayContainer';
 import { VrAtlasContainer } from './components/VrAtlasContainer/VrAtlasContainer';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
+import { RendererDataProviders } from './components/RendererDataProviders/RendererDataProviders';
+import { WidgetRuntimeProvider } from './widgetRuntime';
+import { Gantry } from './components/Gantry/Gantry';
 
 /**
  * Check if this window is the settings window based on URL hash
@@ -26,6 +31,13 @@ const isSettingsWindow = () => {
 
 const isVrAtlasWindow = () => {
   return window.location.hash.startsWith('#/vr-atlas');
+};
+
+/**
+ * Check if this window is the Gantry race-control window based on URL hash
+ */
+const isGantryWindow = () => {
+  return window.location.hash.startsWith('#/gantry');
 };
 
 /**
@@ -41,6 +53,27 @@ const SettingsApp = () => {
         </Routes>
       </HashRouter>
     </>
+  );
+};
+
+/**
+ * Gantry window content - a framed, interactive race-control window.
+ * Unlike the overlay it is not click-through, so it does not use
+ * HideUIWrapper (whose global hide targets transparent overlays).
+ */
+const GantryApp = () => {
+  const { running } = useRunningState();
+  useResetOnDisconnect(running);
+  return (
+    // The runtime provider supplies Gantry's declared channel rates; without
+    // it every channel hook here would fall back to the unthrottled default.
+    <WidgetRuntimeProvider widgetType="gantry">
+      <ThemeManager>
+        <div className="w-full h-full bg-slate-900 text-white">
+          <Gantry />
+        </div>
+      </ThemeManager>
+    </WidgetRuntimeProvider>
   );
 };
 
@@ -71,6 +104,21 @@ const VrAtlasApp = () => {
 };
 
 const App = () => {
+  if (isGantryWindow()) {
+    return (
+      <ErrorBoundary label="gantry" resetAfterMs={2000}>
+        <DashboardProvider bridge={window.dashboardBridge}>
+          <RunningStateProvider bridge={window.irsdkBridge}>
+            <SessionProvider bridge={window.irsdkBridge} />
+            {/* Per-car data comes from typed channels, which subscribe
+                through window.channelBridge and need no provider. */}
+            <GantryApp />
+          </RunningStateProvider>
+        </DashboardProvider>
+      </ErrorBoundary>
+    );
+  }
+
   const isSettings = isSettingsWindow();
   const isVrAtlas = isVrAtlasWindow();
 
@@ -92,7 +140,7 @@ const App = () => {
             <SessionProvider bridge={window.irsdkBridge} />
             <TelemetryProvider bridge={window.irsdkBridge} />
             <PitLaneProvider bridge={window.pitLaneBridge} />
-            <ReferenceStoreProvider bridge={window.referenceLapsBridge} />
+            <ReferenceStoreProvider bridge={window.channelBridge} />
             <VrAtlasApp />
           </RunningStateProvider>
         </DashboardProvider>
@@ -104,10 +152,7 @@ const App = () => {
     <ErrorBoundary label="overlay" resetAfterMs={2000}>
       <DashboardProvider bridge={window.dashboardBridge}>
         <RunningStateProvider bridge={window.irsdkBridge}>
-          <SessionProvider bridge={window.irsdkBridge} />
-          <TelemetryProvider bridge={window.irsdkBridge} />
-          <PitLaneProvider bridge={window.pitLaneBridge} />
-          <ReferenceStoreProvider bridge={window.referenceLapsBridge} />
+          <RendererDataProviders />
           <OverlayApp />
         </RunningStateProvider>
       </DashboardProvider>

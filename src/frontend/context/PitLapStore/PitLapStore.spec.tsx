@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { usePitLapStore, usePitStopDuration } from './PitLapStore';
-import { SessionState } from '@irdashies/types';
+import { SessionState, TrackLocation } from '@irdashies/types';
 
 describe('PitLapStore', () => {
   beforeEach(() => {
@@ -17,6 +17,7 @@ describe('PitLapStore', () => {
       pitExitTime: [],
       prevOnPitRoad: [],
       entryLap: [],
+      firstObservedLap: [],
     });
   });
 
@@ -38,14 +39,16 @@ describe('PitLapStore', () => {
     const carIdxTrackSurface = [0, 0, 0, 0];
     const sessionState = 4;
 
-    usePitLapStore.getState().updatePitLaps(
-      carIdxOnPitRoad,
-      carIdxLap,
-      sessionUniqId,
-      sessionTime,
-      carIdxTrackSurface,
-      sessionState
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps(
+        carIdxOnPitRoad,
+        carIdxLap,
+        sessionUniqId,
+        sessionTime,
+        carIdxTrackSurface,
+        sessionState
+      );
 
     const state = usePitLapStore.getState();
     expect(state.pitLaps[1]).toBe(10);
@@ -53,6 +56,50 @@ describe('PitLapStore', () => {
     expect(state.carLaps).toEqual(carIdxLap);
     expect(state.sessionUniqId).toBe(sessionUniqId);
     expect(state.sessionTime).toBe(sessionTime);
+  });
+
+  it('should record the lap each car was first observed on', () => {
+    usePitLapStore
+      .getState()
+      .updatePitLaps(
+        [false, false, false],
+        [0, 14, -1],
+        123,
+        100,
+        [3, 3, -1],
+        SessionState.Racing
+      );
+
+    const state = usePitLapStore.getState();
+    expect(state.firstObservedLap[0]).toBe(0);
+    expect(state.firstObservedLap[1]).toBe(14);
+    // Car not in the world (lap -1) is not recorded yet
+    expect(state.firstObservedLap[2]).toBeUndefined();
+  });
+
+  it('should not overwrite the first observed lap on later updates', () => {
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false], [3], 123, 100, [3], SessionState.Racing);
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false], [8], 123, 110, [3], SessionState.Racing);
+
+    expect(usePitLapStore.getState().firstObservedLap[0]).toBe(3);
+  });
+
+  it('should reset first observed lap when session changes', () => {
+    usePitLapStore.setState({
+      sessionUniqId: 100,
+      sessionTime: 50,
+      firstObservedLap: [1, 2, 3],
+    });
+
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false], [0], 200, 0, [0], SessionState.Racing);
+
+    expect(usePitLapStore.getState().firstObservedLap).toEqual([]);
   });
 
   it('should reset store when session changes', () => {
@@ -68,14 +115,16 @@ describe('PitLapStore', () => {
     const newSessionUniqId = 200;
     const newSessionTime = 0;
 
-    usePitLapStore.getState().updatePitLaps(
-      [false, false, false],
-      [0, 0, 0],
-      newSessionUniqId,
-      newSessionTime,
-      [0, 0, 0],
-      4
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps(
+        [false, false, false],
+        [0, 0, 0],
+        newSessionUniqId,
+        newSessionTime,
+        [0, 0, 0],
+        4
+      );
 
     const state = usePitLapStore.getState();
     expect(state.sessionUniqId).toBe(newSessionUniqId);
@@ -96,14 +145,9 @@ describe('PitLapStore', () => {
       actualCarTrackSurface: [1, 2, 3],
     });
 
-    usePitLapStore.getState().updatePitLaps(
-      [false, false, false],
-      [0, 0, 0],
-      100,
-      25,
-      [0, 0, 0],
-      4
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false, false, false], [0, 0, 0], 100, 25, [0, 0, 0], 4);
 
     const state = usePitLapStore.getState();
     expect(state.pitLaps).toEqual([]);
@@ -118,27 +162,31 @@ describe('PitLapStore', () => {
     const carIdxTrackSurface = [0, 1];
     const sessionState = 4;
 
-    usePitLapStore.getState().updatePitLaps(
-      carIdxOnPitRoad,
-      carIdxLap,
-      sessionUniqId,
-      sessionTime,
-      carIdxTrackSurface,
-      sessionState
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps(
+        carIdxOnPitRoad,
+        carIdxLap,
+        sessionUniqId,
+        sessionTime,
+        carIdxTrackSurface,
+        sessionState
+      );
 
     let state = usePitLapStore.getState();
     expect(state.actualCarTrackSurface).toEqual([0, 1]);
     expect(state.prevCarTrackSurface).toEqual([undefined, undefined]);
 
-    usePitLapStore.getState().updatePitLaps(
-      carIdxOnPitRoad,
-      carIdxLap,
-      sessionUniqId,
-      sessionTime + 1,
-      [2, 3],
-      sessionState
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps(
+        carIdxOnPitRoad,
+        carIdxLap,
+        sessionUniqId,
+        sessionTime + 1,
+        [2, 3],
+        sessionState
+      );
 
     state = usePitLapStore.getState();
     expect(state.actualCarTrackSurface).toEqual([2, 3]);
@@ -151,14 +199,9 @@ describe('PitLapStore', () => {
       prevCarTrackSurface: [0, 0],
     });
 
-    usePitLapStore.getState().updatePitLaps(
-      [false, false],
-      [1, 1],
-      123,
-      100,
-      [1, 1],
-      5
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false, false], [1, 1], 123, 100, [1, 1], 5);
 
     const state = usePitLapStore.getState();
     expect(state.actualCarTrackSurface).toEqual([0, 0]);
@@ -171,14 +214,9 @@ describe('PitLapStore', () => {
       prevCarTrackSurface: [0, 0],
     });
 
-    usePitLapStore.getState().updatePitLaps(
-      [false, false],
-      [1, 1],
-      123,
-      100,
-      [-1, 1],
-      4
-    );
+    usePitLapStore
+      .getState()
+      .updatePitLaps([false, false], [1, 1], 123, 100, [-1, 1], 4);
 
     const state = usePitLapStore.getState();
     expect(state.actualCarTrackSurface[0]).toBe(0);
@@ -193,14 +231,16 @@ describe('PitLapStore', () => {
       const carIdxTrackSurface = [2, 0];
       const sessionState = SessionState.Racing;
 
-      usePitLapStore.getState().updatePitLaps(
-        [false, true],
-        carIdxLap,
-        sessionUniqId,
-        entryTime,
-        carIdxTrackSurface,
-        sessionState
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [false, true],
+          carIdxLap,
+          sessionUniqId,
+          entryTime,
+          carIdxTrackSurface,
+          sessionState
+        );
 
       const state = usePitLapStore.getState();
       expect(state.pitEntryTime[1]).toBe(entryTime);
@@ -225,14 +265,16 @@ describe('PitLapStore', () => {
         entryLap: [0, 5],
       });
 
-      usePitLapStore.getState().updatePitLaps(
-        [false, false],
-        carIdxLap,
-        sessionUniqId,
-        exitTime,
-        [0, 2],
-        sessionState
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [false, false],
+          carIdxLap,
+          sessionUniqId,
+          exitTime,
+          [0, 2],
+          sessionState
+        );
 
       const state = usePitLapStore.getState();
       expect(state.pitEntryTime[1]).toBe(entryTime);
@@ -292,14 +334,16 @@ describe('PitLapStore', () => {
         pitExitTime: [null, null],
       });
 
-      usePitLapStore.getState().updatePitLaps(
-        [false, true],
-        [1, 1],
-        123,
-        125,
-        [0, 0],
-        SessionState.Checkered
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [false, true],
+          [1, 1],
+          123,
+          125,
+          [0, 0],
+          SessionState.Checkered
+        );
 
       const state = usePitLapStore.getState();
       expect(state.pitEntryTime[1]).toBeNull();
@@ -322,14 +366,16 @@ describe('PitLapStore', () => {
         entryLap: [],
       });
 
-      usePitLapStore.getState().updatePitLaps(
-        [true, true],
-        [5, 6],
-        sessionUniqId,
-        entryTime1,
-        [2, 2],
-        sessionState
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [true, true],
+          [5, 6],
+          sessionUniqId,
+          entryTime1,
+          [2, 2],
+          sessionState
+        );
 
       let state = usePitLapStore.getState();
       expect(state.pitEntryTime[0]).toBe(entryTime1);
@@ -340,14 +386,16 @@ describe('PitLapStore', () => {
         sessionTime: entryTime2,
       });
 
-      usePitLapStore.getState().updatePitLaps(
-        [true, true],
-        [5, 7],
-        sessionUniqId,
-        entryTime2,
-        [2, 2],
-        sessionState
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [true, true],
+          [5, 7],
+          sessionUniqId,
+          entryTime2,
+          [2, 2],
+          sessionState
+        );
 
       state = usePitLapStore.getState();
       expect(state.pitEntryTime[1]).toBe(entryTime2);
@@ -357,14 +405,16 @@ describe('PitLapStore', () => {
         sessionTime: exitTime1,
       });
 
-      usePitLapStore.getState().updatePitLaps(
-        [false, true],
-        [5, 7],
-        sessionUniqId,
-        exitTime1,
-        [2, 2],
-        sessionState
-      );
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [false, true],
+          [5, 7],
+          sessionUniqId,
+          exitTime1,
+          [2, 2],
+          sessionState
+        );
 
       state = usePitLapStore.getState();
       expect(state.pitExitTime[0]).toBe(exitTime1);
@@ -434,6 +484,156 @@ describe('PitLapStore', () => {
 
       const { result } = renderHook(() => usePitStopDuration());
       expect(result.current[0]).toBe(25);
+    });
+  });
+
+  describe('team race driver swaps', () => {
+    const SESSION = 123;
+    const CAR = 1;
+
+    interface Frame {
+      t: number;
+      onPitRoad: boolean;
+      surface: number;
+      lap: number;
+    }
+
+    // Feeds a stop frame by frame for a single car and returns its measured
+    // duration. Car 0 is an inert on-track filler so the arrays are realistic.
+    const playStop = (frames: Frame[]) => {
+      usePitLapStore.setState({ sessionUniqId: SESSION });
+
+      for (const frame of frames) {
+        usePitLapStore
+          .getState()
+          .updatePitLaps(
+            [false, frame.onPitRoad],
+            [0, frame.lap],
+            SESSION,
+            frame.t,
+            [TrackLocation.OnTrack, frame.surface],
+            SessionState.Racing
+          );
+      }
+
+      const { pitEntryTime, pitExitTime } = usePitLapStore.getState();
+      return {
+        entry: pitEntryTime[CAR] ?? null,
+        exit: pitExitTime[CAR] ?? null,
+      };
+    };
+
+    // A 124s stop on lap 10, with the driver change at t=140..142. iRacing drops
+    // the car out of the world while the new driver takes over, which reads as
+    // CarIdxOnPitRoad true -> false -> true.
+    const swapStop = (lapInStall: number): Frame[] => [
+      { t: 100, onPitRoad: false, surface: TrackLocation.OnTrack, lap: 10 },
+      {
+        t: 101,
+        onPitRoad: true,
+        surface: TrackLocation.ApproachingPits,
+        lap: 10,
+      },
+      {
+        t: 105,
+        onPitRoad: true,
+        surface: TrackLocation.InPitStall,
+        lap: lapInStall,
+      },
+      { t: 140, onPitRoad: false, surface: TrackLocation.NotInWorld, lap: -1 },
+      {
+        t: 142,
+        onPitRoad: true,
+        surface: TrackLocation.InPitStall,
+        lap: lapInStall,
+      },
+      {
+        t: 220,
+        onPitRoad: true,
+        surface: TrackLocation.ApproachingPits,
+        lap: lapInStall,
+      },
+      {
+        t: 225,
+        onPitRoad: false,
+        surface: TrackLocation.OnTrack,
+        lap: lapInStall,
+      },
+    ];
+
+    it('times the whole stop across a driver change', () => {
+      const { entry, exit } = playStop(swapStop(10));
+
+      expect(entry).toBe(101);
+      expect(exit).toBe(225);
+      expect((exit ?? 0) - (entry ?? 0)).toBe(124);
+    });
+
+    it('times the whole stop when the lap ticks over during the stop', () => {
+      // Pit lane spans the start/finish line, so the car's lap number changes
+      // between crossing the pit entry line and reaching its stall. This used to
+      // let the driver change re-arm the entry, reporting 83s instead of 124s.
+      const { entry, exit } = playStop(swapStop(11));
+
+      expect(entry).toBe(101);
+      expect(exit).toBe(225);
+      expect((exit ?? 0) - (entry ?? 0)).toBe(124);
+    });
+
+    it('does not close the stop while the car is out of the world', () => {
+      const frames = swapStop(10);
+      const upToSwap = frames.slice(0, 4); // through the NotInWorld frame
+
+      const { entry, exit } = playStop(upToSwap);
+
+      expect(entry).toBe(101);
+      expect(exit).toBeNull();
+    });
+
+    it('reports an ongoing duration that keeps counting through the swap', () => {
+      playStop(swapStop(10).slice(0, 5)); // through the new driver taking over
+      usePitLapStore.setState({ sessionTime: 150 });
+
+      const { result } = renderHook(() => usePitStopDuration());
+
+      // 150 - 101, not 150 - 142.
+      expect(result.current[CAR]).toBe(49);
+    });
+
+    it('still records a normal stop with no driver change', () => {
+      const { entry, exit } = playStop([
+        { t: 100, onPitRoad: false, surface: TrackLocation.OnTrack, lap: 10 },
+        {
+          t: 101,
+          onPitRoad: true,
+          surface: TrackLocation.ApproachingPits,
+          lap: 10,
+        },
+        { t: 105, onPitRoad: true, surface: TrackLocation.InPitStall, lap: 10 },
+        { t: 130, onPitRoad: false, surface: TrackLocation.OnTrack, lap: 10 },
+      ]);
+
+      expect(entry).toBe(101);
+      expect(exit).toBe(130);
+    });
+
+    it('starts a fresh stop on a later lap after the swap stop closed', () => {
+      playStop(swapStop(10));
+
+      usePitLapStore
+        .getState()
+        .updatePitLaps(
+          [false, true],
+          [0, 25],
+          SESSION,
+          800,
+          [TrackLocation.OnTrack, TrackLocation.ApproachingPits],
+          SessionState.Racing
+        );
+
+      const state = usePitLapStore.getState();
+      expect(state.pitEntryTime[CAR]).toBe(800);
+      expect(state.pitExitTime[CAR]).toBeNull();
     });
   });
 });

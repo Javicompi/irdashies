@@ -2,7 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import type { IrSdkBridge, DashboardBridge } from '@irdashies/types';
+import type { IrSdkSourceBridge, DashboardBridge } from '@irdashies/types';
 import logger from '../logger';
 import { currentDashboard } from './bridgeProxy';
 import { getGarageCoverImageAsDataUrl } from '../storage/dashboards';
@@ -185,8 +185,9 @@ async function serveStaticFile(filePath: string, res: http.ServerResponse) {
  * Access components via: http://[dynamic-ip]:<port>/component/<componentName>
  */
 export async function startComponentServer(
-  irsdkBridge?: IrSdkBridge,
-  dashboardBridge?: DashboardBridge
+  irsdkBridge?: IrSdkSourceBridge,
+  dashboardBridge?: DashboardBridge,
+  channelBus?: import('../bridge/channelBridge').ChannelBus
 ) {
   const { getDashboard, getCurrentProfileId } =
     await import('../storage/dashboards');
@@ -458,7 +459,8 @@ export async function startComponentServer(
       const { resubscribeToBridge } = createBridgeProxy(
         httpServer,
         irsdkBridge,
-        dashboardBridge
+        dashboardBridge,
+        channelBus
       );
 
       const { onBridgeChanged } = await import('../bridge/iracingSdk/setup');

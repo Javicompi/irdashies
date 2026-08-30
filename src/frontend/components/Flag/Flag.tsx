@@ -1,17 +1,26 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { useTelemetryValue, useSessionVisibility } from '@irdashies/context';
-import type { GeneralSettingsType } from '@irdashies/types';
+import {
+  useTrackStateSelector,
+  useSessionVisibility,
+} from '@irdashies/context';
+import type { GeneralSettingsType, TrackStateSnapshot } from '@irdashies/types';
+import { shallow } from 'zustand/shallow';
 import { useFlagSettings } from './hooks/useFlagSettings';
 import { useBlinkState } from './hooks/useBlinkState';
 import { getLedColor } from './hooks/getLedColor';
 import { getTextColorClass } from './hooks/getTextColorClass';
 import { getFlag } from '@irdashies/utils/getFlag';
 
+const EMPTY_FLAG_STATE: readonly [number, boolean] = [0, false];
+const selectFlagState = (snapshot: TrackStateSnapshot) =>
+  [snapshot.sessionFlags, snapshot.isOnTrack] as const;
+
 export const Flag = () => {
   const settings = useFlagSettings();
 
-  const sessionFlags = useTelemetryValue<number>('SessionFlags') ?? 0;
-  const isPlayerOnTrack = useTelemetryValue<boolean>('IsOnTrack') ?? false;
+  const [sessionFlags, isPlayerOnTrack] =
+    useTrackStateSelector(selectFlagState, { equality: shallow }) ??
+    EMPTY_FLAG_STATE;
   const isVisibleInSession = useSessionVisibility(settings.sessionVisibility);
 
   const blinkOn = useBlinkState(settings.animate, settings.blinkPeriod);
@@ -195,7 +204,7 @@ export const FlagDisplay = ({
 
     return (
       <div
-        key={i}
+        key={`${row}-${col}`}
         className="w-full h-full box-border"
         style={{ borderRadius: cellRadius, background: bg, boxShadow }}
       />

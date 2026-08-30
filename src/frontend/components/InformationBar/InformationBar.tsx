@@ -4,7 +4,7 @@ import {
   useSessionVisibility,
 } from '@irdashies/context';
 import { SessionBar } from '../Standings/components/SessionBar/SessionBar';
-import { useInformationBarSettings } from '../Standings/hooks/useInformationBarSettings';
+import { useInformationBarSettings } from '@irdashies/domain';
 
 export const InformationBar = () => {
   const settings = useInformationBarSettings();
@@ -36,7 +36,11 @@ export const InformationBar = () => {
         ['--bg-opacity' as string]: `${settings?.background?.opacity ?? 60}%`,
       }}
     >
-      <SessionBar settings={settings} opacity={settings?.foreground?.opacity} standalone />
+      <SessionBar
+        settings={settings}
+        opacity={settings?.foreground?.opacity}
+        standalone
+      />
     </div>
   );
 };

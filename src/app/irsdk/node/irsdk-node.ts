@@ -1,4 +1,4 @@
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {
   BroadcastMessages,
   CameraState,
@@ -27,6 +27,24 @@ import type { INativeSDK } from '../native';
 import { getSimStatus } from './utils';
 import { getSdkOrMock } from './get-sdk';
 import logger from '../../logger';
+
+/**
+ * Encodes a car number string for irsdk_BroadcastCamSwitchNum, mirroring the
+ * SDK's irsdk_padCarNum: a number padded with N leading zeros is sent as
+ * num + 1000 * (digitCount + N), so "30", "030" and "0030" stay distinct.
+ *
+ * Leading zeros are derived by length difference rather than a /^0+/ match,
+ * because for an all-zero number like "00" the match would also consume the
+ * significant digit and over-count the padding by one.
+ */
+function padCarNum(carNumber: string): number {
+  const num = parseInt(carNumber, 10);
+  if (isNaN(num)) return 0;
+  const leadingZeros = carNumber.trim().length - String(num).length;
+  if (leadingZeros <= 0) return num;
+  const numPlaces = (num > 99 ? 3 : num > 9 ? 2 : 1) + leadingZeros;
+  return num + 1000 * numPlaces;
+}
 
 function copyTelemData<
   K extends keyof TelemetryVarList = keyof TelemetryVarList,
@@ -215,6 +233,19 @@ export class IRacingSDK {
   }
 
   /**
+   * Quotes scalar values that iRacing emits with a leading YAML mapping or
+   * sequence indicator. For example, `UserName: ? ?` and
+   * `TeamName: - BLACKSUIT` are not valid as unquoted scalars.
+   */
+  private static fixIndicatorValues(yamlText: string): string {
+    return yamlText.replace(
+      /^([^\S\r\n]*(?:-[^\S\r\n]+)?\w+:[^\S\r\n]*)([?-](?:[^\S\r\n]+[^\r\n]*)?)\r?$/gm,
+      (_line, keyPart: string, value: string) =>
+        `${keyPart}'${value.replace(/'/g, "''")}'`
+    );
+  }
+
+  /**
    * Starts the native iRacing SDK and begins subscribing for data.
    * @returns {boolean} If the SDK started successfully.
    */
@@ -269,7 +300,9 @@ export class IRacingSDK {
       // The multiline-value pass handles iRacing setup names that contain a literal
       // newline (e.g. corrupted DriverSetupName paths), which YAML would otherwise reject.
       const fixedYaml = seshString
-        ? IRacingSDK.fixMultilineValues(seshString)
+        ? IRacingSDK.fixIndicatorValues(
+            IRacingSDK.fixMultilineValues(seshString)
+          )
             .replace(/(\w+: ) *, *\n/g, '$1 \n')
             .replace(/(\w+: )(,.*)/g, '$1"$2" \n')
         : seshString;
@@ -418,15 +451,14 @@ export class IRacingSDK {
     );
   }
 
-  // @todo: needs to be padded
   public changeCameraNumber(
-    driver: number,
+    carNumber: string,
     group: number,
     camera: number
   ): void {
     this._sdk?.broadcast(
       BroadcastMessages.CameraSwitchNum,
-      driver,
+      padCarNum(carNumber),
       group,
       camera
     );

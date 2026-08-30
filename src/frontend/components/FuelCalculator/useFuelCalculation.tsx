@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable no-useless-assignment */
 /**
  * Hook for calculating fuel metrics from telemetry data
  * Follows irdashies pattern using useTelemetryValues and Zustand store
@@ -82,8 +83,11 @@ export function useFuelCalculation(
   const isOnTrack = useTelemetryValue('IsOnTrack');
 
   // Use centralized total race laps calculation
-  const { isFixedLapRace, totalRaceLaps: calculatedTotalRaceLaps, leaderRaceLaps } =
-    useTotalRaceValue();
+  const {
+    isFixedLapRace,
+    totalRaceLaps: calculatedTotalRaceLaps,
+    leaderRaceLaps,
+  } = useTotalRaceValue();
 
   // Green flag timestamp + raw leader data for the debug log
   const greenFlagTimestamp = useGreenFlagTimestamp();
@@ -93,8 +97,7 @@ export function useFuelCalculation(
 
   // Overall race leader (position 1) raw data
   const leaderCarIdx = carIdxPosition?.indexOf(1) ?? -1;
-  const leaderRawLap =
-    leaderCarIdx >= 0 ? (carIdxLap?.[leaderCarIdx] ?? 0) : 0;
+  const leaderRawLap = leaderCarIdx >= 0 ? (carIdxLap?.[leaderCarIdx] ?? 0) : 0;
   const leaderRawLapDistPct =
     leaderCarIdx >= 0 ? (carIdxLapDistPct?.[leaderCarIdx] ?? 0) : 0;
 
@@ -1537,7 +1540,7 @@ export function useFuelCalculation(
     // lapHistorySize is an intentional cache-invalidation dep: lapHistory is read via
     // getState() for performance, and lapHistorySize is the reactive signal that
     // invalidates this memo whenever laps are added or removed from the store.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [
     sessionNum,
     fuelLevel,

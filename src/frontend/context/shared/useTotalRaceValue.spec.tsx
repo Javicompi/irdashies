@@ -89,6 +89,12 @@ function applyScenario(s: Scenario) {
     timeTotal: s.sessionTimeTotal,
     timeRemaining: s.sessionTimeRemain,
     greenFlagTimestamp: s.greenFlagTimestamp ?? 0,
+    isFixedLapRace: s.sessionLaps > 0,
+    totalRaceLaps: 0,
+    totalRaceTime: 0,
+    adjustedRaceTime: 0,
+    sessionNum: 1,
+    version: 0,
   });
 }
 
@@ -176,7 +182,7 @@ describe('useTotalRaceValue', () => {
       classEstLapTimes[PLAYER_CAR_IDX] = 125;
 
       vi.mocked(useCarIdxClassEstLapTime).mockReturnValue(
-        classEstLapTimes as never,
+        classEstLapTimes as never
       );
       vi.mocked(useCarIdxAverageLapTime).mockReturnValue([
         0,
@@ -202,8 +208,7 @@ describe('useTotalRaceValue', () => {
         if (key === 'CarIdxLap')
           return [baseScenario.lap, baseScenario.leaderLap];
         if (key === 'CarIdxPosition') return [2, 1];
-        if (key === 'CarIdxBestLapTime')
-          return [playerBestLapTime, -1];
+        if (key === 'CarIdxBestLapTime') return [playerBestLapTime, -1];
         return undefined as never;
       });
 
@@ -462,6 +467,12 @@ describe('useTotalRaceValue', () => {
         timeTotal: 7200,
         timeRemaining: 40,
         greenFlagTimestamp: 0,
+        isFixedLapRace: false,
+        totalRaceLaps: 0,
+        totalRaceTime: 0,
+        adjustedRaceTime: 0,
+        sessionNum: 1,
+        version: 0,
       });
       rerender();
       // totalRaceLaps freezes at the player's lap; leaderRaceLaps keeps the
@@ -540,6 +551,12 @@ describe('useTotalRaceValue', () => {
         timeTotal: 0,
         timeRemaining: 0,
         greenFlagTimestamp: 0,
+        isFixedLapRace: false,
+        totalRaceLaps: 0,
+        totalRaceTime: 0,
+        adjustedRaceTime: 0,
+        sessionNum: null,
+        version: 0,
       });
       const { result } = renderHook(() => useTotalRaceValue());
       expect(result.current.totalRaceLaps).toBe(0);

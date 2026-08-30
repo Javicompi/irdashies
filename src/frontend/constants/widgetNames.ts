@@ -26,9 +26,11 @@ export const WIDGET_NAMES: Record<WidgetId, string> = {
   infobar: 'Information Bar',
   slowcarahead: 'Slow Car Ahead',
   sectordelta: 'Sector Delta',
+  deltaspeed: 'Delta Speed',
   heartrate: 'Heart Rate',
   cornername: 'Corner Names',
   battle: 'Battle',
+  gantry: 'The Gantry',
 };
 
 /**

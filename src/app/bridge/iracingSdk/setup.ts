@@ -1,15 +1,16 @@
 import { OverlayManager } from '../../overlayManager';
 import { ipcMain } from 'electron';
-import type { IrSdkBridge } from '@irdashies/types';
+import type { IrSdkSourceBridge } from '@irdashies/types';
 import logger from '../../logger';
 import {
   createSessionLifecycle,
   type SessionLifecycle,
 } from '../../sessionLifecycle';
+import type { ChannelBus } from '../channelBridge';
 
 let isDemoMode = false;
-let currentBridge: IrSdkBridge | undefined;
-const onBridgeChangedCallbacks = new Set<(bridge: IrSdkBridge) => void>();
+let currentBridge: IrSdkSourceBridge | undefined;
+const onBridgeChangedCallbacks = new Set<(bridge: IrSdkSourceBridge) => void>();
 
 // Singleton lifecycle — created once; survives bridge restarts so subscribers
 // registered before a demo-mode toggle are preserved.
@@ -22,7 +23,7 @@ export function getSessionLifecycle(): SessionLifecycle {
   return sessionLifecycle;
 }
 
-export function getCurrentBridge(): IrSdkBridge | undefined {
+export function getCurrentBridge(): IrSdkSourceBridge | undefined {
   return currentBridge;
 }
 
@@ -30,12 +31,15 @@ export function getIsDemoMode(): boolean {
   return isDemoMode;
 }
 
-export function onBridgeChanged(callback: (bridge: IrSdkBridge) => void) {
+export function onBridgeChanged(callback: (bridge: IrSdkSourceBridge) => void) {
   onBridgeChangedCallbacks.add(callback);
   return () => onBridgeChangedCallbacks.delete(callback);
 }
 
-export async function iRacingSDKSetup(overlayManager: OverlayManager) {
+export async function iRacingSDKSetup(
+  overlayManager: OverlayManager,
+  channelBus?: ChannelBus
+) {
   ipcMain.on('toggleDemoMode', async (_, value: boolean) => {
     isDemoMode = value;
     if (currentBridge) {
@@ -51,27 +55,35 @@ export async function iRacingSDKSetup(overlayManager: OverlayManager) {
       await import('../dashboard/dashboardBridge');
     notifyDemoModeChanged(value);
 
-    await setupBridge(overlayManager);
+    await setupBridge(overlayManager, channelBus);
   });
 
-  await setupBridge(overlayManager);
+  await setupBridge(overlayManager, channelBus);
 }
 
-async function setupBridge(overlayManager: OverlayManager) {
+async function setupBridge(
+  overlayManager: OverlayManager,
+  channelBus?: ChannelBus
+) {
   try {
     if (currentBridge) {
       currentBridge.stop();
       currentBridge = undefined;
     }
 
+    const isTapeReplay = Boolean(process.env.IRDASHIES_TELEMETRY_REPLAY);
     const module =
-      isDemoMode || process.platform !== 'win32'
+      isDemoMode || (process.platform !== 'win32' && !isTapeReplay)
         ? await import('./mock-data/mockSdkBridge')
         : await import('./iracingSdkBridge');
 
     const { publishIRacingSDKEvents } = module;
     const lifecycle = isDemoMode ? undefined : getSessionLifecycle();
-    currentBridge = await publishIRacingSDKEvents(overlayManager, lifecycle);
+    currentBridge = await publishIRacingSDKEvents(
+      overlayManager,
+      lifecycle,
+      channelBus
+    );
 
     if (onBridgeChangedCallbacks.size > 0 && currentBridge) {
       const bridge = currentBridge;

@@ -27,10 +27,12 @@ import { InformationBarSettings } from './sections/InformationBarSettings';
 import { useDashboard } from '@irdashies/context';
 import { SlowCarAheadSettings } from './sections/SlowCarAheadSettings';
 import { SectorDeltaSettings } from './sections/SectorDeltaSettings';
+import { DeltaSpeedSettings } from './sections/DeltaSpeedSettings';
 import { HeartRateSettings } from './sections/HeartRateSettings';
 import { CornerNameSettings } from './sections/CornerNameSettings';
 import { BattleSettings } from './sections/BattleSettings';
 import { VrSettings } from './sections/VrSettings';
+import { GantrySettings } from './sections/GantrySettings';
 
 interface SettingsLoaderProps {
   previewMode?: boolean;
@@ -96,12 +98,16 @@ export const SettingsLoader = ({ previewMode }: SettingsLoaderProps = {}) => {
       return <SlowCarAheadSettings />;
     case 'sectordelta':
       return <SectorDeltaSettings />;
+    case 'deltaspeed':
+      return <DeltaSpeedSettings />;
     case 'heartrate':
       return <HeartRateSettings />;
     case 'cornername':
       return <CornerNameSettings />;
     case 'battle':
       return <BattleSettings />;
+    case 'gantry':
+      return <GantrySettings />;
     default:
       return widget ? (
         <div className="text-red-400">No settings available for {type}</div>

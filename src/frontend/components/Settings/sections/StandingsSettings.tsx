@@ -59,7 +59,12 @@ const sortableSettings: SortableSetting[] = [
   },
   { id: 'driverTag', label: 'Driver Tag', configKey: 'driverTag' },
   { id: 'badge', label: 'Driver Badge', configKey: 'badge' },
-  { id: 'iratingChange', label: 'iRating Change', configKey: 'iratingChange' },
+  {
+    id: 'iratingChange',
+    label: 'iRating Change',
+    configKey: 'iratingChange',
+    hasSubSetting: true,
+  },
   {
     id: 'positionChange',
     label: 'Position Change',
@@ -86,6 +91,11 @@ const sortableSettings: SortableSetting[] = [
     label: 'Avg Lap Time',
     configKey: 'avgLapTime',
     hasSubSetting: true,
+  },
+  {
+    id: 'lapCount',
+    label: 'Lap Count',
+    configKey: 'lapCount',
   },
   { id: 'pushToPass', label: 'Push to Pass', configKey: 'pushToPass' },
 ];
@@ -120,7 +130,8 @@ const DisplaySettingsList = ({
       onReorder={(newItems) => onReorder(newItems.map((i) => i.id))}
       renderItem={(setting, sortableProps) => {
         const configValue = settings.config[setting.configKey];
-        const isEnabled = (configValue as { enabled: boolean }).enabled;
+        const isEnabled =
+          (configValue as { enabled: boolean } | undefined)?.enabled ?? false;
 
         return (
           <DraggableSettingItem
@@ -138,6 +149,28 @@ const DisplaySettingsList = ({
             }}
             sortableProps={sortableProps}
           >
+            {setting.hasSubSetting &&
+              setting.configKey === 'iratingChange' &&
+              settings.config.iratingChange.enabled && (
+                <div className="flex items-center justify-between gap-3 pl-8 mt-2 indent-8">
+                  <span className="text-sm text-slate-300">
+                    Estimate During Practice
+                  </span>
+                  <ToggleSwitch
+                    enabled={
+                      settings.config.iratingChange.estimateInPractice ?? false
+                    }
+                    onToggle={(enabled) =>
+                      handleConfigChange({
+                        iratingChange: {
+                          ...settings.config.iratingChange,
+                          estimateInPractice: enabled,
+                        },
+                      })
+                    }
+                  />
+                </div>
+              )}
             {setting.hasSubSetting &&
               setting.configKey === 'lapTimeDeltas' &&
               settings.config.lapTimeDeltas.enabled && (
@@ -281,8 +314,7 @@ const DisplaySettingsList = ({
                         [setting.configKey]: {
                           ...cv,
                           pitLapDisplayMode: e.target.value as
-                            | 'lastPitLap'
-                            | 'lapsSinceLastPit',
+                            'lastPitLap' | 'lapsSinceLastPit',
                         },
                       });
                     }}
@@ -660,6 +692,19 @@ export const StandingsSettings = () => {
               {/* OPTIONS TAB */}
               {activeTab === 'options' && (
                 <>
+                  <SettingsSection title="Multiclass Standings">
+                    <SettingToggleRow
+                      title="Position-based class ordering"
+                      description="If enabled, classes are ordered based on the class's leader's overall position (does not override class colors)."
+                      enabled={settings.config.customClassOrdering ?? false}
+                      onToggle={(newValue) =>
+                        handleConfigChange({ customClassOrdering: newValue })
+                      }
+                    />
+                  </SettingsSection>
+
+                  <SettingDivider />
+
                   <SettingsSection title="Driver Standings">
                     <SettingSelectRow
                       title="Drivers to show around player"
@@ -1008,6 +1053,22 @@ export const StandingsSettings = () => {
               {/* STYLING TAB */}
               {activeTab === 'styling' && (
                 <>
+                  <SettingsSection title="Scale">
+                    <SettingSliderRow
+                      title="Widget Scale"
+                      description="Scale the entire standings widget"
+                      value={settings.config.scale ?? 100}
+                      units="%"
+                      min={50}
+                      max={200}
+                      step={5}
+                      onChange={(v) =>
+                        handleConfigChange({
+                          scale: v,
+                        })
+                      }
+                    />
+                  </SettingsSection>
                   <SettingsSection title="Class Header">
                     <SettingToggleRow
                       title="Class Name Background"
@@ -1057,6 +1118,103 @@ export const StandingsSettings = () => {
                         })
                       }
                     />
+                    <SettingToggleRow
+                      title="Compact SoF Formatting"
+                      description='Display SoF as a compact value (e.g. "2.4k" instead of "2432")'
+                      enabled={
+                        settings.config.classHeaderStyle?.compactSof ?? false
+                      }
+                      onToggle={(newValue) =>
+                        handleConfigChange({
+                          classHeaderStyle: {
+                            ...settings.config.classHeaderStyle,
+                            compactSof: newValue,
+                          },
+                        })
+                      }
+                    />
+                    <SettingToggleRow
+                      title="Show Manufacturer Counts"
+                      description="Show manufacturer icons with driver counts in the class header (multi-make classes only)"
+                      enabled={
+                        settings.config.classHeaderStyle?.manufacturerStats
+                          ?.enabled ?? false
+                      }
+                      onToggle={(newValue) =>
+                        handleConfigChange({
+                          classHeaderStyle: {
+                            ...settings.config.classHeaderStyle,
+                            manufacturerStats: {
+                              enabled: newValue,
+                              cap:
+                                settings.config.classHeaderStyle
+                                  ?.manufacturerStats?.cap ?? 5,
+                              showPlayerManufacturer:
+                                settings.config.classHeaderStyle
+                                  ?.manufacturerStats?.showPlayerManufacturer ??
+                                false,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    {(settings.config.classHeaderStyle?.manufacturerStats
+                      ?.enabled ??
+                      false) && (
+                      <>
+                        <SettingSelectRow
+                          title="Max manufacturers to show"
+                          value={
+                            settings.config.classHeaderStyle?.manufacturerStats?.cap?.toString() ??
+                            'all'
+                          }
+                          options={[
+                            ...Array.from({ length: 10 }, (_, i) => ({
+                              label: (i + 1).toString(),
+                              value: (i + 1).toString(),
+                            })),
+                            { label: 'All', value: 'all' },
+                          ]}
+                          onChange={(v) =>
+                            handleConfigChange({
+                              classHeaderStyle: {
+                                ...settings.config.classHeaderStyle,
+                                manufacturerStats: {
+                                  enabled: true,
+                                  cap: v === 'all' ? null : parseInt(v),
+                                  showPlayerManufacturer:
+                                    settings.config.classHeaderStyle
+                                      ?.manufacturerStats
+                                      ?.showPlayerManufacturer ?? false,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <SettingToggleRow
+                          title="Always show your manufacturer"
+                          description="If your manufacturer is outside the cap, it replaces the last shown entry"
+                          enabled={
+                            settings.config.classHeaderStyle?.manufacturerStats
+                              ?.showPlayerManufacturer ?? false
+                          }
+                          onToggle={(newValue) =>
+                            handleConfigChange({
+                              classHeaderStyle: {
+                                ...settings.config.classHeaderStyle,
+                                manufacturerStats: {
+                                  enabled: true,
+                                  cap:
+                                    settings.config.classHeaderStyle
+                                      ?.manufacturerStats?.cap ?? 5,
+                                  showPlayerManufacturer: newValue,
+                                },
+                              },
+                            })
+                          }
+                        />
+                      </>
+                    )}
                   </SettingsSection>
 
                   <SettingDivider />
@@ -1150,6 +1308,22 @@ export const StandingsSettings = () => {
                           stylingOptions: {
                             ...settings.config.stylingOptions,
                             statusBadges: newValue,
+                          },
+                        })
+                      }
+                    />
+                    <SettingToggleRow
+                      title="Minimal Lap Count Badge"
+                      description="Remove the border from the lap count badge"
+                      enabled={
+                        settings.config.stylingOptions?.lapCount?.minimal ??
+                        false
+                      }
+                      onToggle={(newValue) =>
+                        handleConfigChange({
+                          stylingOptions: {
+                            ...settings.config.stylingOptions,
+                            lapCount: { minimal: newValue },
                           },
                         })
                       }

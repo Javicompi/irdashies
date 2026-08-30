@@ -1,6 +1,8 @@
 # Logs
 logs
 *.log
+*.irdt
+!test-data/telemetry/ai-race-10min.irdt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -121,6 +123,7 @@ PITLANE_DETECTION_FIXES.md
 
 # storybook
 storybook-static/
+perf-results/
 
 # landing site
 site/dist/
@@ -129,3 +132,5 @@ site/node_modules/
 docs/dashboard.json
 ka-local/register-task.ps1
 ka-local/update-and-launch.ps1
+ka-local/iracing-api.ts
+docs/GANTRY_LAP_GRAPH_PLAN.md

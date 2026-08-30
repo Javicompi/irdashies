@@ -1,9 +1,11 @@
-import type { IrSdkBridge } from '@irdashies/types';
+import type { IrSdkBridge, IrSdkRawTelemetryBridge } from '@irdashies/types';
 import { useTelemetryStore } from './TelemetryStore';
 import { useEffect } from 'react';
 
 export interface TelemetryProviderProps {
-  bridge: IrSdkBridge | Promise<IrSdkBridge>;
+  bridge:
+    | (IrSdkBridge & IrSdkRawTelemetryBridge)
+    | Promise<IrSdkBridge & IrSdkRawTelemetryBridge>;
 }
 
 export const TelemetryProvider = ({ bridge }: TelemetryProviderProps) => {
@@ -39,7 +41,7 @@ export const TelemetryProvider = ({ bridge }: TelemetryProviderProps) => {
       if (unsub) unsub();
       bridge.stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [bridge]);
 
   return <></>;

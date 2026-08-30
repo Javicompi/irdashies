@@ -12,6 +12,8 @@ import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
 import { SectorTimingUpdater } from './SectorTimingUpdater';
 import { PushToPassUpdater } from './PushToPassUpdater';
 import { PitLapUpdater } from './PitLapUpdater';
+import { SessionTimingUpdater } from './SessionTimingUpdater';
+import { WidgetRuntimeProvider } from '../../widgetRuntime';
 
 export const OverlayContainer = memo(() => {
   const {
@@ -100,7 +102,14 @@ export const OverlayContainer = memo(() => {
   );
 
   const enabledWidgets = useMemo(
-    () => currentDashboard?.widgets.filter((widget) => widget.enabled) ?? [],
+    () =>
+      currentDashboard?.widgets.filter(
+        (widget) =>
+          widget.enabled &&
+          // Gantry renders in its own separate hash-routed window (see
+          // componentRenderer.tsx), not as an overlay widget — exclude it here.
+          widget.id !== 'gantry'
+      ) ?? [],
     [currentDashboard?.widgets]
   );
 
@@ -156,9 +165,14 @@ export const OverlayContainer = memo(() => {
         editMode ? 'bg-blue-900/20' : '',
       ].join(' ')}
     >
-      <SectorTimingUpdater />
+      <SectorTimingUpdater
+        enabled={widgetsForThisDisplay.some((widget) =>
+          ['sectordelta', 'map', 'flatmap'].includes(widget.type || widget.id)
+        )}
+      />
       <PushToPassUpdater />
       <PitLapUpdater />
+      <SessionTimingUpdater />
       {widgetsForThisDisplay.map((widget, index) => {
         // Transiently hidden via a per-widget hotkey — skip rendering.
         if (hiddenWidgetIds.has(widget.id)) {
@@ -186,7 +200,9 @@ export const OverlayContainer = memo(() => {
                 label={`widget:${widget.type || widget.id}`}
                 resetAfterMs={2000}
               >
-                <WidgetComponent {...widget.config} />
+                <WidgetRuntimeProvider widgetType={widget.type || widget.id}>
+                  <WidgetComponent {...widget.config} />
+                </WidgetRuntimeProvider>
               </ErrorBoundary>
             ) : null}
           </WidgetContainer>

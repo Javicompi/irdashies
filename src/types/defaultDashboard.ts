@@ -16,9 +16,12 @@ export const defaultDashboard: {
         height: 774,
       },
       config: {
+        customClassOrdering: false,
+        scale: 100,
         useLivePosition: false,
         iratingChange: {
           enabled: true,
+          estimateInPractice: false,
         },
         positionChange: {
           enabled: false,
@@ -94,6 +97,9 @@ export const defaultDashboard: {
           numLaps: 5,
           timeFormat: 'mixed',
         },
+        lapCount: {
+          enabled: false,
+        },
         driverStandings: {
           buffer: 3,
           numNonClassDrivers: 3,
@@ -151,6 +157,24 @@ export const defaultDashboard: {
           trackName: {
             enabled: false,
           },
+          fuelLevel: {
+            enabled: false,
+          },
+          lastLap: {
+            enabled: false,
+          },
+          bestLap: {
+            enabled: false,
+          },
+          topSpeed: {
+            enabled: false,
+          },
+          manufacturerPosition: {
+            enabled: false,
+          },
+          classRank: {
+            enabled: false,
+          },
           displayOrder: [
             'sessionName',
             'sessionTime',
@@ -165,6 +189,12 @@ export const defaultDashboard: {
             'trackTemperature',
             'wind',
             'trackName',
+            'fuelLevel',
+            'lastLap',
+            'bestLap',
+            'topSpeed',
+            'manufacturerPosition',
+            'classRank',
           ],
         },
         footerBar: {
@@ -211,6 +241,24 @@ export const defaultDashboard: {
           trackName: {
             enabled: false,
           },
+          fuelLevel: {
+            enabled: false,
+          },
+          lastLap: {
+            enabled: false,
+          },
+          bestLap: {
+            enabled: false,
+          },
+          topSpeed: {
+            enabled: false,
+          },
+          manufacturerPosition: {
+            enabled: false,
+          },
+          classRank: {
+            enabled: false,
+          },
           displayOrder: [
             'sessionName',
             'sessionTime',
@@ -225,6 +273,12 @@ export const defaultDashboard: {
             'trackTemperature',
             'wind',
             'trackName',
+            'fuelLevel',
+            'lastLap',
+            'bestLap',
+            'topSpeed',
+            'manufacturerPosition',
+            'classRank',
           ],
         },
         showOnlyWhenOnTrack: false,
@@ -248,6 +302,7 @@ export const defaultDashboard: {
           'compound',
           'lapTimeDeltas',
           'avgLapTime',
+          'lapCount',
           'pushToPass',
         ],
         driverTag: { enabled: false },
@@ -322,6 +377,7 @@ export const defaultDashboard: {
           size: 100,
           showspeed: true,
           showspeedunit: true,
+          swapSpeedUnit: false,
           unit: 'auto',
         },
         abs: {
@@ -528,6 +584,24 @@ export const defaultDashboard: {
           trackName: {
             enabled: false,
           },
+          fuelLevel: {
+            enabled: false,
+          },
+          lastLap: {
+            enabled: false,
+          },
+          bestLap: {
+            enabled: false,
+          },
+          topSpeed: {
+            enabled: false,
+          },
+          manufacturerPosition: {
+            enabled: false,
+          },
+          classRank: {
+            enabled: false,
+          },
           displayOrder: [
             'sessionName',
             'sessionTime',
@@ -542,6 +616,12 @@ export const defaultDashboard: {
             'trackTemperature',
             'wind',
             'trackName',
+            'fuelLevel',
+            'lastLap',
+            'bestLap',
+            'topSpeed',
+            'manufacturerPosition',
+            'classRank',
           ],
         },
         footerBar: {
@@ -588,6 +668,24 @@ export const defaultDashboard: {
           trackName: {
             enabled: false,
           },
+          fuelLevel: {
+            enabled: false,
+          },
+          lastLap: {
+            enabled: false,
+          },
+          bestLap: {
+            enabled: false,
+          },
+          topSpeed: {
+            enabled: false,
+          },
+          manufacturerPosition: {
+            enabled: false,
+          },
+          classRank: {
+            enabled: false,
+          },
           displayOrder: [
             'sessionName',
             'sessionTime',
@@ -602,6 +700,12 @@ export const defaultDashboard: {
             'trackTemperature',
             'wind',
             'trackName',
+            'fuelLevel',
+            'lastLap',
+            'bestLap',
+            'topSpeed',
+            'manufacturerPosition',
+            'classRank',
           ],
         },
         showOnlyWhenOnTrack: false,
@@ -819,15 +923,15 @@ export const defaultDashboard: {
         showLapsRemaining: true,
         showMin: true,
         showCurrentLap: true,
-        showLastLap: true,
+        showLastLap: false,
         show3LapAvg: true,
-        show10LapAvg: true,
+        show10LapAvg: false,
         showMax: true,
         showPitWindow: true,
         showEnduranceStrategy: true,
         showFuelScenarios: true,
         showFuelRequired: true,
-        showQualifyConsumption: true,
+        showQualifyConsumption: false,
         showFuelHistory: true,
         fuelHistoryType: 'histogram',
         safetyMargin: 0,
@@ -865,7 +969,15 @@ export const defaultDashboard: {
             },
           ],
         },
-        consumptionGridOrder: ['curr', 'avg', 'max', 'last', 'min', 'qual'],
+        consumptionGridOrder: [
+          'curr',
+          'avg',
+          'max',
+          'min',
+          'last',
+          'avg10',
+          'qual',
+        ],
         avgLapsCount: 5,
         fuelStatusThresholds: {
           green: 60,
@@ -1017,6 +1129,7 @@ export const defaultDashboard: {
         history: {
           enabled: true,
           count: 10,
+          style: 'list',
         },
         background: {
           opacity: 80,
@@ -1258,6 +1371,37 @@ export const defaultDashboard: {
       },
     },
     {
+      id: 'deltaspeed',
+      enabled: false,
+      layout: {
+        x: 6,
+        y: 870,
+        width: 160,
+        height: 40,
+      },
+      config: {
+        background: { opacity: 80 },
+        unit: 'km/h',
+        scaleKph: 15,
+        scaleMph: 10,
+        capKph: 30,
+        capMph: 20,
+        // 0.2 mph is ~0.32 km/h, so the two thresholds feel the same in use
+        // rather than mph being twice as twitchy.
+        updateThresholdKph: 0.3,
+        updateThresholdMph: 0.2,
+        showNumber: true,
+        showOnlyWhenOnTrack: true,
+        sessionVisibility: {
+          race: true,
+          loneQualify: true,
+          openQualify: true,
+          practice: true,
+          offlineTesting: true,
+        },
+      },
+    },
+    {
       id: 'heartrate',
       alwaysEnabled: true,
       enabled: false,
@@ -1304,6 +1448,34 @@ export const defaultDashboard: {
         },
       },
     },
+    {
+      id: 'gantry',
+      enabled: false,
+      layout: {
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+      },
+      config: {
+        speedUnit: 'auto',
+        driverNameFormat: 'surname',
+        thresholdsVersion: 3,
+        slowSpeedThreshold: 15,
+        slowDurationSeconds: 1,
+        impactDecelKmhPerSec: 150,
+        impactMinSpeed: 20,
+        offTrackDurationSeconds: 0.3,
+        pitEntryDurationSeconds: 0.6,
+        cooldownSeconds: 5,
+        sessionRetention: 'all',
+        lapGraph: {
+          yAxisMode: 'trace',
+          lapWindow: 75,
+          autoPin: true,
+        },
+      },
+    },
   ],
   generalSettings: {
     fontType: 'lato',
@@ -1331,8 +1503,7 @@ export function getWidgetDefaultConfig<K extends keyof WidgetConfigMap>(
   id: K
 ): WidgetConfigMap[K] {
   const widget = defaultDashboard.widgets.find((w) => w.id === id) as
-    | TypedDashboardWidget<K>
-    | undefined;
+    TypedDashboardWidget<K> | undefined;
   if (!widget) throw new Error(`No default config found for widget: ${id}`);
   return widget.config;
 }

@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
+import { shallow } from 'zustand/shallow';
 import {
-  useTelemetryValuesRounded,
+  trackStateSelectors,
+  useTrackStateSelector,
   useSessionStore,
   useFocusCarIdx,
   useTrackLength,
@@ -24,7 +26,10 @@ export const usePitboxPosition = (
 ): PitboxPositionResult => {
   const session = useSessionStore((state) => state.session);
   const focusCarIdx = useFocusCarIdx();
-  const carIdxLapDistPct = useTelemetryValuesRounded('CarIdxLapDistPct', 3);
+  const carIdxLapDistPct = useTrackStateSelector(
+    trackStateSelectors.carIdxLapDistPct,
+    { equality: shallow }
+  );
   const trackLength = useTrackLength() ?? 0;
   const { pitEntryPct, pitExitPct } = usePitLaneStore();
 
@@ -78,7 +83,7 @@ export const usePitboxPosition = (
     //
     // If we have accurate pit entry data from detection, calculate distance from pit entry to pitbox.
     // Otherwise, fall back to heuristic (pitbox in last 10% of track).
-    let isEarlyPitbox = false;
+    let isEarlyPitbox: boolean;
 
     if (pitEntryPct !== null) {
       // Calculate distance from pit entry to pitbox along pit lane direction

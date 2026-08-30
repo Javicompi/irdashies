@@ -81,11 +81,27 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Constant Definitions
 
+#include <cstring>
+#include <ctime>
+
+#if defined(_WIN32)
 #include <tchar.h>
 
-static const _TCHAR IRSDK_DATAVALIDEVENTNAME[] = _T("Local\\IRSDKDataValidEvent");
-static const _TCHAR IRSDK_MEMMAPFILENAME[]     = _T("Local\\IRSDKMemMapFileName");
+#include "./irsdk_shared_objects.h"
+
+#if defined(IRDASHIES_IRSDK_REPLAY_NAMES)
+static const _TCHAR IRSDK_DATAVALIDEVENTNAME[] =
+	IRDASHIES_IRSDK_REPLAY_EVENT_NAME;
+static const _TCHAR IRSDK_MEMMAPFILENAME[] =
+	IRDASHIES_IRSDK_REPLAY_MAPPING_NAME;
+#else
+static const _TCHAR IRSDK_DATAVALIDEVENTNAME[] =
+	IRDASHIES_IRSDK_PRODUCTION_EVENT_NAME;
+static const _TCHAR IRSDK_MEMMAPFILENAME[] =
+	IRDASHIES_IRSDK_PRODUCTION_MAPPING_NAME;
+#endif
 static const _TCHAR IRSDK_BROADCASTMSGNAME[]   = _T("IRSDK_BROADCASTMSG");
+#endif
 
 static const int IRSDK_MAX_BUFS = 4;
 static const int IRSDK_MAX_STRING = 32;

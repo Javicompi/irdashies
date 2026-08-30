@@ -3,7 +3,10 @@ import {
   FasterCarsFromBehind,
   FasterCarsFromBehindDisplay,
 } from './FasterCarsFromBehind';
-import { TelemetryDecorator } from '@irdashies/storybook';
+import {
+  CaptureChannelDecorator,
+  TelemetryDecorator,
+} from '@irdashies/storybook';
 
 // Mock the settings hook for stories
 const mockSettings = {
@@ -54,7 +57,10 @@ type Story = StoryObj<typeof FasterCarsFromBehindDisplay>;
 
 export const Primary: Story = {
   render: () => <FasterCarsFromBehind />,
-  decorators: [TelemetryDecorator('/test-data/1747384033336')],
+  decorators: [
+    TelemetryDecorator('/test-data/1747384033336'),
+    CaptureChannelDecorator('/test-data/1747384033336'),
+  ],
 };
 
 export const Display: Story = {

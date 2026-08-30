@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { arrayCompare } from '../TelemetryStore/telemetryCompare';
-import { SessionState } from '@irdashies/types';
+import { SessionState, TrackLocation } from '@irdashies/types';
 
 interface PitLapState {
   sessionUniqId: number;
@@ -15,6 +15,7 @@ interface PitLapState {
   pitExitTime: (number | null)[]; // [carIdx]
   prevOnPitRoad: boolean[]; // [carIdx]
   entryLap: number[]; // [carIdx]
+  firstObservedLap: number[]; // [carIdx] — CarIdxLap when this car was first seen
   updatePitLaps: (
     carIdxOnPitRoad: boolean[],
     carIdxLap: number[],
@@ -38,6 +39,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
   pitExitTime: [],
   prevOnPitRoad: [],
   entryLap: [],
+  firstObservedLap: [],
   updatePitLaps: (
     carIdxOnPitRoad,
     carIdxLap,
@@ -56,6 +58,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
       pitExitTime,
       prevOnPitRoad,
       entryLap,
+      firstObservedLap,
     } = get();
 
     // reset store when session was changed
@@ -73,6 +76,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
         pitExitTime: [],
         prevOnPitRoad: [],
         entryLap: [],
+        firstObservedLap: [],
         sessionTime: currentSessionTime,
         sessionState: sessionState,
       });
@@ -85,6 +89,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
     let updatedPitExitTime: (number | null)[] | null = null;
     let updatedPrevOnPitRoad: boolean[] | null = null;
     let updatedEntryLap: number[] | null = null;
+    let updatedFirstObservedLap: number[] | null = null;
     let pitLapsChanged = false;
 
     carIdxOnPitRoad.forEach((onPitRoad, idx) => {
@@ -92,6 +97,25 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
       const trackSurface = carIdxTrackSurface[idx] ?? -1;
       const currentLap = carIdxLap[idx] ?? -1;
       const lastEntryLap = entryLap[idx] ?? -1;
+
+      // A car that is not in the world reports CarIdxOnPitRoad false regardless
+      // of where it actually is. During a team-race driver change the car drops
+      // out of the world in its own stall, so the raw signal reads
+      // true -> false -> true across the swap. Acting on that would close the
+      // stop and re-arm a fresh entry at the moment the new driver takes over,
+      // restarting the clock mid-stop and reporting only the post-swap portion.
+      // Skipping these frames entirely leaves prevOnPitRoad untouched, so the
+      // swap is invisible to the entry/exit edge detection below.
+      if (trackSurface <= TrackLocation.NotInWorld) return;
+
+      // Record the lap on which we first observed each car. Used to tell whether
+      // we've watched a car since its session start — if so, its first-stint lap
+      // equals the total session lap even without an observed pit stop.
+      if (firstObservedLap[idx] === undefined && currentLap >= 0) {
+        if (!updatedFirstObservedLap)
+          updatedFirstObservedLap = [...firstObservedLap];
+        updatedFirstObservedLap[idx] = currentLap;
+      }
 
       if (onPitRoad && pitLaps[idx] !== currentLap) {
         pitLaps[idx] = currentLap;
@@ -172,6 +196,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
       updatedPitExitTime !== null ||
       updatedPrevOnPitRoad !== null ||
       updatedEntryLap !== null ||
+      updatedFirstObservedLap !== null ||
       updatedPrevCarTrackSurface !== null ||
       updatedActualCarTrackSurface !== null ||
       carLapsChanged ||
@@ -193,6 +218,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
       pitExitTime: updatedPitExitTime ?? pitExitTime,
       prevOnPitRoad: updatedPrevOnPitRoad ?? prevOnPitRoad,
       entryLap: updatedEntryLap ?? entryLap,
+      firstObservedLap: updatedFirstObservedLap ?? firstObservedLap,
       sessionTime: currentSessionTime,
       sessionState: sessionState,
       sessionUniqId: currentSessionUniqId,
@@ -211,6 +237,7 @@ export const usePitLapStore = create<PitLapState>((set, get) => ({
       pitExitTime: [],
       prevOnPitRoad: [],
       entryLap: [],
+      firstObservedLap: [],
     });
   },
 }));
@@ -260,6 +287,18 @@ export const usePrevCarTrackSurface = (): number[] =>
   useStoreWithEqualityFn(
     usePitLapStore,
     (state) => state.prevCarTrackSurface,
+    arrayCompare
+  );
+
+/**
+ * @returns An array of the CarIdxLap value at which each car was first observed
+ * by the overlay, indexed by carIdx. Used to determine whether the overlay has
+ * watched a car since its session start (and therefore knows its true stint lap).
+ */
+export const useFirstObservedLap = (): number[] =>
+  useStoreWithEqualityFn(
+    usePitLapStore,
+    (state) => state.firstObservedLap,
     arrayCompare
   );
 

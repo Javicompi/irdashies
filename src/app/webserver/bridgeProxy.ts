@@ -1,9 +1,15 @@
 import { Server as HTTPServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Telemetry, Session, DashboardLayout } from '@irdashies/types';
-import type { IrSdkBridge, DashboardBridge } from '@irdashies/types';
+import {
+  TELEMETRY_INSPECTOR_RATE_HZ,
+  type Telemetry,
+  type Session,
+  type DashboardLayout,
+} from '@irdashies/types';
+import type { IrSdkSourceBridge, DashboardBridge } from '@irdashies/types';
 import { getIsDemoMode } from '../bridge/iracingSdk/setup';
 import logger from '../logger';
+import type { ChannelBus } from '../bridge/channelBridge';
 
 // Export current state so it can be accessed by other parts of the app
 export let currentDashboard: DashboardLayout | null = null;
@@ -14,13 +20,20 @@ export let currentDashboard: DashboardLayout | null = null;
  */
 export function createBridgeProxy(
   httpServer: HTTPServer,
-  irsdkBridge: IrSdkBridge,
-  dashboardBridge?: DashboardBridge
+  irsdkBridge: IrSdkSourceBridge,
+  dashboardBridge?: DashboardBridge,
+  channelBus?: ChannelBus
 ) {
   const wss = new WebSocketServer({ server: httpServer });
 
   const clients = new Set<WebSocket>();
+  const inspectorStreams = new Map<
+    WebSocket,
+    Set<'telemetryInspector' | 'sessionData'>
+  >();
+  let nextChannelTargetId = -1;
   let currentTelemetry: Telemetry | null = null;
+  let lastTelemetryBroadcastTime = Number.NEGATIVE_INFINITY;
   let currentSession: Session | null = null;
   let isRunning = false;
   let isDemoMode = getIsDemoMode();
@@ -32,21 +45,34 @@ export function createBridgeProxy(
   const broadcast = (type: string, data: unknown) => {
     const message = JSON.stringify({ type, data });
     clients.forEach((client) => {
+      if (
+        (type === 'telemetry' || type === 'sessionData') &&
+        !inspectorStreams
+          .get(client)
+          ?.has(type === 'telemetry' ? 'telemetryInspector' : 'sessionData')
+      ) {
+        return;
+      }
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
     });
   };
 
-  let currentBridge: IrSdkBridge | null = null;
+  let currentBridge: IrSdkSourceBridge | null = null;
   let unsubscribeFunctions: (() => void)[] = [];
 
-  const subscribeToBridge = (bridge: IrSdkBridge) => {
+  const subscribeToBridge = (bridge: IrSdkSourceBridge) => {
     currentBridge = bridge;
 
     const unsubTelemetry = bridge.onTelemetry((telemetry: Telemetry) => {
       currentTelemetry = telemetry;
-      if (clients.size > 0) {
+      const now = performance.now();
+      if (
+        clients.size > 0 &&
+        now - lastTelemetryBroadcastTime >= 1000 / TELEMETRY_INSPECTOR_RATE_HZ
+      ) {
+        lastTelemetryBroadcastTime = now;
         broadcast('telemetry', telemetry);
       }
     });
@@ -75,7 +101,7 @@ export function createBridgeProxy(
     unsubscribeFunctions = [];
   };
 
-  const resubscribeToBridge = (newBridge: IrSdkBridge) => {
+  const resubscribeToBridge = (newBridge: IrSdkSourceBridge) => {
     logger.info('Bridge proxy: Re-subscribing to new bridge...');
     // Unsubscribe from old bridge first
     unsubscribeFromBridge();
@@ -103,6 +129,19 @@ export function createBridgeProxy(
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws);
+    inspectorStreams.set(ws, new Set());
+    const channelTarget = {
+      id: nextChannelTargetId--,
+      isDestroyed: () => ws.readyState === WebSocket.CLOSED,
+      isVisible: () => ws.readyState === WebSocket.OPEN,
+      send: (_delivery: string, channel: string, payload: unknown) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({ type: 'channel', data: { channel, payload } })
+          );
+        }
+      },
+    };
 
     if (unsubscribeFunctions.length === 0) {
       logger.info('No active subscriptions, subscribing to bridge...');
@@ -113,8 +152,6 @@ export function createBridgeProxy(
       JSON.stringify({
         type: 'initialState',
         data: {
-          telemetry: currentTelemetry,
-          sessionData: currentSession,
           isRunning,
           dashboard: currentDashboard,
           isDemoMode,
@@ -127,6 +164,54 @@ export function createBridgeProxy(
         const parsed = JSON.parse(message.toString());
 
         switch (parsed.type) {
+          case 'telemetryInspectorSubscribe': {
+            const stream = parsed.data?.stream;
+            if (stream !== 'telemetryInspector' && stream !== 'sessionData') {
+              throw new Error('Invalid Telemetry Inspector subscription');
+            }
+            inspectorStreams.get(ws)?.add(stream);
+            const current =
+              stream === 'telemetryInspector'
+                ? currentTelemetry
+                : currentSession;
+            if (current !== null && ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: stream === 'telemetryInspector' ? 'telemetry' : stream,
+                  data: current,
+                })
+              );
+            }
+            break;
+          }
+          case 'telemetryInspectorUnsubscribe': {
+            const stream = parsed.data?.stream;
+            if (stream !== 'telemetryInspector' && stream !== 'sessionData') {
+              throw new Error('Invalid Telemetry Inspector unsubscribe');
+            }
+            inspectorStreams.get(ws)?.delete(stream);
+            break;
+          }
+          case 'channelSubscribe': {
+            const channel = parsed.data?.channel;
+            const rate = parsed.data?.requestedRateHz;
+            if (
+              typeof channel !== 'string' ||
+              (rate !== undefined && typeof rate !== 'number')
+            ) {
+              throw new Error('Invalid channel subscription');
+            }
+            channelBus?.subscribe(channelTarget, channel, rate);
+            break;
+          }
+          case 'channelUnsubscribe': {
+            const channel = parsed.data?.channel;
+            if (typeof channel !== 'string') {
+              throw new Error('Invalid channel unsubscribe');
+            }
+            channelBus?.unsubscribe(channelTarget.id, channel);
+            break;
+          }
           case 'getDashboard':
             ws.send(
               JSON.stringify({
@@ -296,6 +381,8 @@ export function createBridgeProxy(
 
     ws.on('close', () => {
       clients.delete(ws);
+      inspectorStreams.delete(ws);
+      channelBus?.removeRenderer(channelTarget.id);
 
       if (clients.size === 0) {
         logger.info('No clients connected, unsubscribing from bridge...');

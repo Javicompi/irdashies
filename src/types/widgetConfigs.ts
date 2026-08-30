@@ -69,6 +69,16 @@ export interface SessionBarConfig {
   trackTemperature: { enabled: boolean; unit: TemperatureUnit };
   wind?: { enabled: boolean; speedPosition?: 'left' | 'right' };
   trackName: { enabled: boolean };
+  fuelLevel?: { enabled: boolean };
+  lastLap?: { enabled: boolean };
+  bestLap?: { enabled: boolean };
+  topSpeed?: { enabled: boolean };
+  manufacturerPosition?: {
+    enabled: boolean;
+    hideIfSingleMake?: boolean;
+    hideIfSingleDriver?: boolean;
+  };
+  classRank?: { enabled: boolean };
   displayOrder: string[];
   foreground?: { opacity: number };
 }
@@ -82,6 +92,7 @@ export interface StylingOptions {
   statusBadges?: boolean;
   driverPosition?: { background?: boolean };
   driverNumber?: { background?: boolean; border?: boolean };
+  lapCount?: { minimal?: boolean };
   flagContour?: {
     enabled?: boolean;
     borderWidth?: number;
@@ -92,6 +103,12 @@ export interface ClassHeaderStyle {
   className?: { colorBackground?: boolean };
   classInfo?: { colorBackground?: boolean };
   classDivider?: { bottomBorder?: boolean };
+  compactSof?: boolean;
+  manufacturerStats?: {
+    enabled: boolean;
+    cap: number | null; // null = All
+    showPlayerManufacturer: boolean;
+  };
 }
 
 // ===========================
@@ -130,7 +147,9 @@ export type RelativeBadgeFormat =
 // ===========================
 
 export interface StandingsConfig {
-  iratingChange: { enabled: boolean };
+  customClassOrdering: boolean;
+  scale?: number;
+  iratingChange: { enabled: boolean; estimateInPractice?: boolean };
   positionChange: { enabled: boolean };
   badge: { enabled: boolean; badgeFormat: StandingsBadgeFormat };
   delta: { enabled: boolean };
@@ -154,6 +173,7 @@ export interface StandingsConfig {
   radio?: { persistenceSeconds: number };
   lapTimeDeltas: { enabled: boolean; numLaps: number; decimalPlaces: number };
   avgLapTime: { enabled: boolean; numLaps: number; timeFormat: TimeFormat };
+  lapCount: { enabled: boolean };
   titleBar: { enabled: boolean; progressBar: { enabled: boolean } };
   headerBar: SessionBarConfig;
   footerBar: SessionBarConfig;
@@ -281,6 +301,8 @@ export interface InputConfig {
     includeBrake: boolean;
     includeClutch: boolean;
     includeAbs: boolean;
+    /** 'overlay' draws a wider stroke on top of the brake curve; 'bar' fills the area under the curve to y=0 */
+    absStyle?: 'overlay' | 'bar';
     includeSteer?: boolean;
     strokeWidth?: number;
     maxSamples?: number;
@@ -557,6 +579,7 @@ export interface LapTimeLogConfig {
   history: {
     enabled: boolean;
     count: number;
+    style?: 'list' | 'chart';
   };
   scale: number;
   alignment: 'top' | 'bottom';
@@ -617,6 +640,45 @@ export interface SectorDeltaConfig {
   alwaysScroll?: boolean;
 }
 
+export interface DeltaSpeedConfig {
+  background: { opacity: number };
+  /**
+   * Display unit. Speeds are held in km/h throughout and converted only for
+   * display. 'auto' follows iRacing's own DisplayUnits setting.
+   */
+  unit: 'km/h' | 'mph' | 'auto';
+  /**
+   * Delta at which the background reaches full colour, in km/h. Held per unit
+   * rather than converted so both caps stay whole numbers — converting a 15
+   * km/h cap would give an awkward 9.3 mph.
+   */
+  scaleKph: number;
+  /** Delta at which the background reaches full colour, in mph. */
+  scaleMph: number;
+  /**
+   * Largest delta shown numerically, in km/h. Past this the readout holds at
+   * the cap instead of climbing: an exact figure only helps while the
+   * correction is still worth making, and a wide delta is already obvious from
+   * the colour. Held per unit for the same reason as the scales above.
+   */
+  capKph: number;
+  /** Largest delta shown numerically, in mph. */
+  capMph: number;
+  /**
+   * The readout holds its current value until the true delta has moved at
+   * least this far, in km/h. Without it the last digit flickers between
+   * neighbouring values while the delta is essentially steady, which draws the
+   * eye for no reason.
+   */
+  updateThresholdKph: number;
+  /** Update threshold applied when displaying mph. */
+  updateThresholdMph: number;
+  /** Show the numeric delta inside the box. */
+  showNumber: boolean;
+  showOnlyWhenOnTrack: boolean;
+  sessionVisibility: SessionVisibilitySettings;
+}
+
 export interface BattleConfig {
   background: { opacity: number };
   showOnlyWhenOnTrack: boolean;
@@ -630,6 +692,49 @@ export interface BattleConfig {
   displayOrder: string[];
   sessionVisibility: SessionVisibilitySettings;
 }
+
+export type SessionRetention = 'all' | 5 | 10 | 20;
+
+/** Which quantity the lap graph's y axis measures. */
+export type LapGraphYAxisMode = 'trace' | 'position' | 'gap';
+
+export interface LapGraphConfig {
+  /** Which y axis the graph opens on. */
+  yAxisMode: LapGraphYAxisMode;
+  /** Laps visible by default; the graph follows the latest lap. */
+  lapWindow: number;
+  /** Auto-pin the player, the class leader, and the cars around the player. */
+  autoPin: boolean;
+}
+
+/** The recorder keeps 300 laps per car, so a wider window has nothing to show. */
+export const LAP_GRAPH_LAP_WINDOW_BOUNDS = { min: 5, max: 300 } as const;
+
+export interface GantryConfig {
+  /** Display units for speed values. Stored thresholds stay in km/h. */
+  speedUnit: 'mph' | 'km/h' | 'auto';
+  /** How driver names are written in the standings list. */
+  driverNameFormat: NameFormat;
+  /**
+   * Bumped when a saved threshold's meaning changes. Configs below the current
+   * version are reset rather than converted; see migrateGantryThresholds.
+   */
+  thresholdsVersion: number;
+  // Incident detection thresholds
+  slowSpeedThreshold: number;
+  slowDurationSeconds: number;
+  impactDecelKmhPerSec: number;
+  impactMinSpeed: number;
+  offTrackDurationSeconds: number;
+  pitEntryDurationSeconds: number;
+  cooldownSeconds: number;
+  // Persistence
+  sessionRetention: SessionRetention;
+  // Lap Graph tab
+  lapGraph: LapGraphConfig;
+}
+
+export type GantryWidgetSettings = BaseWidgetSettings<GantryConfig>;
 
 // ===========================
 // Widget config map + typed widget
@@ -664,9 +769,11 @@ export interface WidgetConfigMap {
   infobar: InformationBarConfig;
   slowcarahead: SlowCarAheadConfig;
   sectordelta: SectorDeltaConfig;
+  deltaspeed: DeltaSpeedConfig;
   heartrate: HeartRateConfig;
   cornername: CornerNameOverlayConfig;
   battle: BattleConfig;
+  gantry: GantryConfig;
 }
 
 export type TypedDashboardWidget<
@@ -703,7 +810,8 @@ export type SettingsTabType =
   | 'history'
   | 'telemetry'
   | 'dashboard'
-  | 'chromium';
+  | 'chromium'
+  | 'incidents';
 
 /** Available widgets for the Fuel Calculator */
 export type FuelWidgetType =
@@ -765,6 +873,7 @@ export type InformationBarWidgetSettings =
   BaseWidgetSettings<InformationBarConfig>;
 export type SlowCarAheadWidgetSettings = BaseWidgetSettings<SlowCarAheadConfig>;
 export type SectorDeltaWidgetSettings = BaseWidgetSettings<SectorDeltaConfig>;
+export type DeltaSpeedWidgetSettings = BaseWidgetSettings<DeltaSpeedConfig>;
 export type HeartRateWidgetSettings = BaseWidgetSettings<HeartRateConfig>;
 export type CornerNameWidgetSettings =
   BaseWidgetSettings<CornerNameOverlayConfig>;

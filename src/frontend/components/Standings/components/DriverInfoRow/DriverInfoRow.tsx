@@ -3,12 +3,13 @@ import { getTailwindStyle } from '@irdashies/utils/colors';
 import { formatTime, type TimeFormat } from '@irdashies/utils/time';
 import { useDashboard, type P2PDisplayState } from '@irdashies/context';
 import type { ResolvedDriverTag } from '../../hooks';
-import type { Gap, LastTimeState } from '../../createStandings';
+import type { Gap, LastTimeState } from '@irdashies/domain';
 import type {
   RelativeWidgetSettings,
   StandingsWidgetSettings,
 } from '@irdashies/types';
 import { AvgLapTimeCell } from './cells/AvgLapTimeCell';
+import { LapCountCell } from './cells/LapCountCell';
 import { BadgeCell } from './cells/BadgeCell';
 import { CarManufacturerCell } from './cells/CarManufacturerCell';
 import { CarNumberCell } from './cells/CarNumberCell';
@@ -78,14 +79,17 @@ interface DriverRowInfoProps {
   hideCarManufacturer?: boolean;
   resolvedTag?: ResolvedDriverTag;
   hasAnyDriverTag?: boolean;
+  hasAnyCountryFlag?: boolean;
   compactMode?: string;
   p2pDisplayState?: P2PDisplayState;
+  currentLap?: number;
+  lapCountUnknown?: boolean;
 }
 
 // Helper function to provide dummy data for hidden rows
 const getDummyData = () => ({
   position: 1,
-  carNumber: '1',
+  carNumber: '333',
   name: 'Driver Name',
   teamName: 'Team Name',
   delta: 0,
@@ -228,8 +232,11 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
     hideCarManufacturer,
     resolvedTag,
     hasAnyDriverTag,
+    hasAnyCountryFlag,
     compactMode,
     p2pDisplayState,
+    currentLap,
+    lapCountUnknown,
   } = displayProps;
 
   const { currentDashboard } = useDashboard();
@@ -337,7 +344,8 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
         id: 'countryFlags',
         shouldRender:
           (displayOrder ? displayOrder.includes('countryFlags') : true) &&
-          (config?.countryFlags?.enabled ?? true),
+          (config?.countryFlags?.enabled ?? true) &&
+          (hasAnyCountryFlag ?? true),
         component: (
           <CountryFlagsCell
             key="countryFlags"
@@ -606,6 +614,21 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
         ),
       },
       {
+        id: 'lapCount',
+        shouldRender:
+          (displayOrder ? displayOrder.includes('lapCount') : false) &&
+          (config && 'lapCount' in config ? config.lapCount.enabled : false),
+        component: (
+          <LapCountCell
+            key="lapCount"
+            lap={currentLap}
+            unknown={lapCountUnknown}
+            showBorder={!(config?.stylingOptions?.lapCount?.minimal ?? false)}
+            compactMode={compactMode}
+          />
+        ),
+      },
+      {
         id: 'pushToPass',
         shouldRender:
           (displayOrder ? displayOrder.includes('pushToPass') : false) &&
@@ -676,6 +699,7 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
     tagSettings,
     resolvedTag,
     hasAnyDriverTag,
+    hasAnyCountryFlag,
     hidden,
     badgeMinimal,
     statusBadgesMinimal,
@@ -684,6 +708,8 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
     numberBorder,
     compactMode,
     p2pDisplayState,
+    currentLap,
+    lapCountUnknown,
   ]);
 
   return (

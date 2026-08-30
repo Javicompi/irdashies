@@ -12,7 +12,14 @@ const config: ForgeConfig = {
     icon: path.resolve(__dirname, 'docs/assets/icons/logo'),
     extraResource: [
       path.resolve(__dirname, 'docs/assets/icons'),
-      path.resolve(__dirname, 'native', 'openxr-layer', 'build', 'Release', 'irDashies-OpenXR-Layer.dll'),
+      path.resolve(
+        __dirname,
+        'native',
+        'openxr-layer',
+        'build',
+        'Release',
+        'irDashies-OpenXR-Layer.dll'
+      ),
       path.resolve(__dirname, 'scripts', 'register-openxr.ps1'),
     ],
   },
@@ -48,19 +55,19 @@ const config: ForgeConfig = {
         {
           // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
           entry: 'src/main.ts',
-          config: 'vite.main.config.ts',
+          config: 'vite.main.config.mts',
           target: 'main',
         },
         {
           entry: 'src/preload.ts',
-          config: 'vite.preload.config.ts',
+          config: 'vite.preload.config.mts',
           target: 'preload',
         },
       ],
       renderer: [
         {
           name: 'main_window',
-          config: 'vite.renderer.config.ts',
+          config: 'vite.renderer.config.mts',
         },
       ],
     }),

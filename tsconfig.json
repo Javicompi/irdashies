@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2024",
     "module": "ESNext",
     "allowJs": true,
     "skipLibCheck": true,
@@ -16,10 +16,12 @@
       "@irdashies/storybook": ["./.storybook"],
       "@irdashies/utils/*": ["./src/frontend/utils/*"],
       "@irdashies/context": ["./src/frontend/context"],
+      "@irdashies/domain": ["./src/frontend/domain"],
+      "@irdashies/domain/*": ["./src/frontend/domain/*"],
       "@irdashies/types": ["./src/types"],
       "@irdashies/shared": ["./src/shared"]
     },
-    "types": ["vite/client", "w3c-web-hid"]
+    "types": ["node", "vite/client", "w3c-web-hid"]
   },
-  "exclude": ["site"]
+  "include": ["src", "site/src", "tools", "vitest.setup.ts"]
 }

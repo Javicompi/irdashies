@@ -3,6 +3,7 @@ import type {
   Session,
   Telemetry,
   IrSdkBridge,
+  IrSdkRawTelemetryBridge,
   DashboardBridge,
   DashboardLayout,
   DashboardProfile,
@@ -10,31 +11,71 @@ import type {
   ContainerBoundsInfo,
   FuelCalculatorBridge,
   FuelLapData,
-  ReferenceLap,
-  ReferenceLapBridge,
   KeybindingsBridge,
   KeybindingActionId,
   GamepadHostBridge,
   PersonalBestLapBridge,
   ChromiumFlagsBridge,
   ChromiumFlagsType,
+  RaceControlBridge,
+  Incident,
+  IncidentThresholds,
+  SessionRetention,
+  TelemetryInspectorBridge,
+  RendererPerfBridge,
 } from '@irdashies/types';
+import {
+  isRendererPerfMetricsEnabled,
+  recordTelemetryCallback,
+  recordRendererMeasure,
+} from '../rendererPerfMetrics';
+import {
+  RENDERER_DATA_SUBSCRIPTION_BRIDGE,
+  type RendererDataStream,
+} from './rendererDataSubscriptions';
+import { createSubscriptionBridgeClient, defineBridge } from './defineBridge';
 
 export function exposeBridge() {
-  contextBridge.exposeInMainWorld('irsdkBridge', {
-    onTelemetry: (callback: (value: Telemetry) => void) => {
-      const handler = (_: Electron.IpcRendererEvent, value: Telemetry) => {
-        callback(value);
-      };
-      ipcRenderer.on('telemetry', handler);
-      return () => ipcRenderer.removeListener('telemetry', handler);
-    },
+  if (isRendererPerfMetricsEnabled()) {
+    defineBridge<RendererPerfBridge>('rendererPerfBridge', {
+      recordMeasure: (name, durationMs) => {
+        if (!isRendererPerfMetricsEnabled()) return;
+        if (name !== 'trackMapAnimationFrame') return;
+        if (!Number.isFinite(durationMs) || durationMs < 0) return;
+        recordRendererMeasure(name, durationMs);
+      },
+    });
+  }
+  const rendererDataSubscriptions =
+    createSubscriptionBridgeClient<RendererDataStream>(
+      RENDERER_DATA_SUBSCRIPTION_BRIDGE
+    );
+  const rendererDataListenerCounts = new Map<RendererDataStream, number>();
+  const addRendererDataListener = (stream: RendererDataStream) => {
+    const count = rendererDataListenerCounts.get(stream) ?? 0;
+    rendererDataListenerCounts.set(stream, count + 1);
+    if (count === 0) void rendererDataSubscriptions.subscribe(stream);
+  };
+  const removeRendererDataListener = (stream: RendererDataStream) => {
+    const count = rendererDataListenerCounts.get(stream) ?? 0;
+    if (count <= 1) {
+      rendererDataListenerCounts.delete(stream);
+      void rendererDataSubscriptions.unsubscribe(stream);
+      return;
+    }
+    rendererDataListenerCounts.set(stream, count - 1);
+  };
+  defineBridge<IrSdkBridge & IrSdkRawTelemetryBridge>('irsdkBridge', {
     onSessionData: (callback: (value: Session) => void) => {
       const handler = (_: Electron.IpcRendererEvent, value: Session) => {
         callback(value);
       };
+      addRendererDataListener('sessionData');
       ipcRenderer.on('sessionData', handler);
-      return () => ipcRenderer.removeListener('sessionData', handler);
+      return () => {
+        ipcRenderer.removeListener('sessionData', handler);
+        removeRendererDataListener('sessionData');
+      };
     },
     onRunningState: (callback: (value: boolean) => void) => {
       const handler = (_: Electron.IpcRendererEvent, value: boolean) => {
@@ -43,12 +84,58 @@ export function exposeBridge() {
       ipcRenderer.on('runningState', handler);
       return () => ipcRenderer.removeListener('runningState', handler);
     },
+    onTelemetry: (callback: (value: Telemetry) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, value: Telemetry) => {
+        callback(value);
+      };
+      addRendererDataListener('telemetry');
+      ipcRenderer.on('telemetry', handler);
+      return () => {
+        ipcRenderer.removeListener('telemetry', handler);
+        removeRendererDataListener('telemetry');
+      };
+    },
     stop: () => {
-      ipcRenderer.removeAllListeners('telemetry');
+      for (const stream of rendererDataListenerCounts.keys()) {
+        void rendererDataSubscriptions.unsubscribe(stream);
+      }
+      rendererDataListenerCounts.clear();
       ipcRenderer.removeAllListeners('sessionData');
       ipcRenderer.removeAllListeners('runningState');
+      ipcRenderer.removeAllListeners('telemetryInspector:telemetry');
+      ipcRenderer.removeAllListeners('telemetry');
     },
-  } as IrSdkBridge);
+  });
+  defineBridge<TelemetryInspectorBridge>('telemetryInspectorBridge', {
+    onTelemetry: (callback: (value: Telemetry) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, value: Telemetry) => {
+        if (!isRendererPerfMetricsEnabled()) {
+          callback(value);
+          return;
+        }
+        const start = performance.now();
+        callback(value);
+        recordTelemetryCallback(performance.now() - start);
+      };
+      addRendererDataListener('telemetryInspector');
+      ipcRenderer.on('telemetryInspector:telemetry', handler);
+      return () => {
+        ipcRenderer.removeListener('telemetryInspector:telemetry', handler);
+        removeRendererDataListener('telemetryInspector');
+      };
+    },
+    onSessionData: (callback: (value: Session) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, value: Session) => {
+        callback(value);
+      };
+      addRendererDataListener('sessionData');
+      ipcRenderer.on('sessionData', handler);
+      return () => {
+        ipcRenderer.removeListener('sessionData', handler);
+        removeRendererDataListener('sessionData');
+      };
+    },
+  });
 
   contextBridge.exposeInMainWorld('dashboardBridge', {
     onEditModeToggled: (callback: (value: boolean) => void) => {
@@ -240,26 +327,6 @@ export function exposeBridge() {
     },
   } as FuelCalculatorBridge);
 
-  contextBridge.exposeInMainWorld('referenceLapsBridge', {
-    getReferenceLap: (seriesId: number, trackId: number, classId: number) => {
-      return ipcRenderer.invoke('reference:get', seriesId, trackId, classId);
-    },
-    saveReferenceLap: (
-      seriesId: number,
-      trackId: number,
-      classId: number,
-      lap: ReferenceLap
-    ) => {
-      return ipcRenderer.invoke(
-        'reference:save',
-        seriesId,
-        trackId,
-        classId,
-        lap
-      );
-    },
-  } as ReferenceLapBridge);
-
   contextBridge.exposeInMainWorld('keybindingsBridge', {
     getKeybindings: () => ipcRenderer.invoke('keybindings:get'),
     updateKeybinding: (
@@ -303,4 +370,18 @@ export function exposeBridge() {
     saveFlags: (flags: ChromiumFlagsType) =>
       ipcRenderer.invoke('chromiumFlags:save', flags),
   } as ChromiumFlagsBridge);
+
+  defineBridge<RaceControlBridge>('raceControlBridge', {
+    getIncidents: () => ipcRenderer.invoke('raceControl:getIncidents'),
+    replayIncident: (incident: Incident, seconds: number) =>
+      ipcRenderer.invoke('raceControl:replayIncident', incident, seconds),
+    focusDriver: (carNumber: string) =>
+      ipcRenderer.invoke('raceControl:focusDriver', carNumber),
+    clearIncidents: () => ipcRenderer.invoke('raceControl:clearIncidents'),
+    updateThresholds: (thresholds: IncidentThresholds) =>
+      ipcRenderer.invoke('raceControl:updateThresholds', thresholds),
+    updateRetention: (retention: SessionRetention) =>
+      ipcRenderer.invoke('raceControl:updateRetention', retention),
+    showGantryWindow: () => ipcRenderer.invoke('raceControl:showGantryWindow'),
+  });
 }

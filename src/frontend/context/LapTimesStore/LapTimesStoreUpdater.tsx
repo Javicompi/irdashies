@@ -1,39 +1,44 @@
 import { useEffect, useRef } from 'react';
-import {
-  useTelemetryValue,
-  useTelemetryValues,
-} from '../TelemetryStore/TelemetryStore';
+import logger from '@irdashies/utils/logger';
+import { useLapTimesSnapshot } from '../ChannelStore';
 import { useLapTimesStore } from './LapTimesStore';
 
 /**
- * Hook that automatically updates the LapTimesStore with telemetry data.
+ * Mirrors the main-process lap-times channel into the presentation store.
  * Pass `enabled: true` when any lap-time-dependent feature (deltas, avg lap)
- * is active in the consuming widget. Multiple widgets can call this safely —
- * the store update is idempotent and cheap.
+ * is active in the consuming widget. Multiple widgets can call this safely.
  */
 export const useLapTimesStoreUpdater = (enabled: boolean) => {
-  const sessionNum = useTelemetryValue('SessionNum');
-  const carIdxLastLapTime = useTelemetryValues('CarIdxLastLapTime');
-  const updateLapTimes = useLapTimesStore((state) => state.updateLapTimes);
-  const reset = useLapTimesStore((state) => state.reset);
-  const prevSessionNumRef = useRef<number | undefined | null>(undefined);
-
-  // Reset immediately when the session number transitions to a different
-  // real value. Skip the initial undefined→undefined render and the
-  // undefined→0 SDK-connect transition so we don't log spurious resets.
-  // The store also handles session changes defensively in updateLapTimes.
-  useEffect(() => {
-    const prev = prevSessionNumRef.current;
-    prevSessionNumRef.current = sessionNum;
-    if (sessionNum === undefined) return;
-    if (prev === undefined) return;
-    if (prev === sessionNum) return;
-    reset();
-  }, [sessionNum, reset]);
+  const snapshot = useLapTimesSnapshot(enabled);
+  const applySnapshot = useLapTimesStore((state) => state.applySnapshot);
+  // Widgets that wait on lap times look empty until the first car has a time.
+  // Log both moments once so a slow startup can be attributed.
+  const logged = useRef({ arrived: false, populated: false });
 
   useEffect(() => {
-    if (carIdxLastLapTime && enabled) {
-      updateLapTimes(carIdxLastLapTime, sessionNum ?? null);
+    if (!snapshot || !enabled) return;
+    applySnapshot(snapshot);
+
+    const marks = logged.current;
+    if (!marks.arrived) {
+      marks.arrived = true;
+      logger.debug(
+        `[LapTimesStore] first snapshot: sessionNum=${snapshot.sessionNum} version=${snapshot.version} cars=${snapshot.lapTimes.length}`
+      );
     }
-  }, [carIdxLastLapTime, sessionNum, updateLapTimes, enabled]);
+    if (!marks.populated) {
+      // Counted in place: this runs on every snapshot until a car sets a lap,
+      // which can be minutes of a pre-race grid.
+      let withTimes = 0;
+      for (const time of snapshot.lapTimes) {
+        if (time > 0) withTimes++;
+      }
+      if (withTimes > 0) {
+        marks.populated = true;
+        logger.debug(
+          `[LapTimesStore] first populated snapshot: ${withTimes} cars with a lap time (version=${snapshot.version})`
+        );
+      }
+    }
+  }, [applySnapshot, enabled, snapshot]);
 };
