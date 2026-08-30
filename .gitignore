@@ -91,6 +91,10 @@ typings/
 # Electron-Forge
 out/
 
+# VR build artifacts
+irdashies-vr*.zip
+irdashies-vr-setup.exe
+
 *storybook.log
 test-data/**/*.png
 test-data/unused
