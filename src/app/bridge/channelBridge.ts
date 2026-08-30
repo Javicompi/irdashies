@@ -22,14 +22,34 @@ export type {
   TimerHandle,
 } from './channelBus';
 
-const targetFor = (sender: Electron.WebContents): RendererTarget => ({
+export interface ChannelBridgeOptions {
+  /**
+   * Windows that must receive channel delivery while hidden. The offscreen VR
+   * atlas window is created with `show: false` and would otherwise never get
+   * channel snapshots, leaving its widgets (fuel, standings, ...) empty.
+   */
+  isAlwaysVisible?: (win: BrowserWindow) => boolean;
+}
+
+const targetFor = (
+  sender: Electron.WebContents,
+  isAlwaysVisible?: (win: BrowserWindow) => boolean
+): RendererTarget => ({
   id: sender.id,
   isDestroyed: () => sender.isDestroyed(),
-  isVisible: () => BrowserWindow.fromWebContents(sender)?.isVisible() ?? false,
+  isVisible: () => {
+    const win = BrowserWindow.fromWebContents(sender);
+    if (!win) return false;
+    if (isAlwaysVisible?.(win)) return true;
+    return win.isVisible();
+  },
   send: (channel, name, payload) => sender.send(channel, name, payload),
 });
 
-export const setupChannelBridge = (bus: ChannelBus): (() => void) => {
+export const setupChannelBridge = (
+  bus: ChannelBus,
+  options: ChannelBridgeOptions = {}
+): (() => void) => {
   const rendererCleanup = new Map<number, () => void>();
   ipcMain.handle(
     CHANNEL_SUBSCRIBE,
@@ -64,7 +84,11 @@ export const setupChannelBridge = (bus: ChannelBus): (() => void) => {
           cleanup();
         });
       }
-      bus.subscribe(targetFor(event.sender), channel, rate);
+      bus.subscribe(
+        targetFor(event.sender, options.isAlwaysVisible),
+        channel,
+        rate
+      );
     }
   );
   ipcMain.handle(CHANNEL_UNSUBSCRIBE, (event, channel: unknown) => {

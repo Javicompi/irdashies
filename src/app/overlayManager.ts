@@ -762,6 +762,11 @@ export class OverlayManager {
     this.externalWindows.delete(win);
   }
 
+  /** Whether the window is an external (non-bounds-managed) overlay, e.g. the VR atlas. */
+  public isExternalWindow(win: BrowserWindow): boolean {
+    return this.externalWindows.has(win);
+  }
+
   /**
    * Close all display overlay windows
    */

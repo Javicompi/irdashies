@@ -227,7 +227,9 @@ app.on('ready', async () => {
     );
   }
 
-  setupChannelBridge(channelBus);
+  setupChannelBridge(channelBus, {
+    isAlwaysVisible: (win) => overlayManager.isExternalWindow(win),
+  });
   const rendererDataSubscriptions = setupRendererDataSubscriptions();
   disposeRendererDataSubscriptions = rendererDataSubscriptions.dispose;
   overlayManager.setRendererDataSubscriptions(
