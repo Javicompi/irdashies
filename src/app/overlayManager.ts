@@ -216,7 +216,7 @@ export class OverlayManager {
       roundedCorners: false,
       hasShadow: false,
       show: false,
-      alwaysOnTop: true,
+      alwaysOnTop: this.overlayAlwaysOnTop,
       backgroundColor: '#00000000',
       icon: getIconPath(),
       webPreferences: {
@@ -274,10 +274,6 @@ export class OverlayManager {
     browserWindow.setVisibleOnAllWorkspaces(true, {
       visibleOnFullScreen: true,
     });
-
-    if (this.overlayAlwaysOnTop) {
-      browserWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-    }
 
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
       browserWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -357,7 +353,7 @@ export class OverlayManager {
 
       browserWindow.setPosition(expectedBounds.x, expectedBounds.y);
       browserWindow.setSize(expectedBounds.width, expectedBounds.height);
-      browserWindow.show();
+      browserWindow.showInactive();
 
       const actualBounds = browserWindow.getBounds();
       const offset = {
