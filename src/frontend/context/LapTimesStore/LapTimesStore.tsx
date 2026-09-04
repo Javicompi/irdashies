@@ -29,13 +29,40 @@ export const useLapTimesStore = create<LapTimesState>((set) => ({
     });
   },
   applySnapshot: (snapshot) => {
-    set({
-      lapTimeBuffer: {
-        lapTimeHistory: snapshot.lapTimeHistory.map((history) => [...history]),
-        version: snapshot.version,
-      },
-      lapTimes: [...snapshot.lapTimes],
-      sessionNum: snapshot.sessionNum,
+    set((state) => {
+      const current = state.lapTimeBuffer;
+      const historyEqual =
+        current !== null &&
+        current.lapTimeHistory.length === snapshot.lapTimeHistory.length &&
+        current.lapTimeHistory.every(
+          (history, carIdx) =>
+            history.length === snapshot.lapTimeHistory[carIdx].length &&
+            history.every(
+              (lapTime, index) =>
+                lapTime === snapshot.lapTimeHistory[carIdx][index]
+            )
+        );
+      const timesEqual =
+        state.lapTimes.length === snapshot.lapTimes.length &&
+        state.lapTimes.every(
+          (lapTime, index) => lapTime === snapshot.lapTimes[index]
+        );
+      // Skip identical content so subscribers (useLapTimes) keep the same
+      // array reference and no notification fires. Without this, every
+      // redundant channel delivery allocated fresh arrays and forced UES
+      // re-renders that accumulated into React error #185 (maximum update
+      // depth) during race-start remounts.
+      if (historyEqual && timesEqual) return state;
+      return {
+        lapTimeBuffer: {
+          lapTimeHistory: snapshot.lapTimeHistory.map((history) => [
+            ...history,
+          ]),
+          version: snapshot.version,
+        },
+        lapTimes: [...snapshot.lapTimes],
+        sessionNum: snapshot.sessionNum,
+      };
     });
   },
 }));
