@@ -46,6 +46,10 @@ export class ChannelSelectionStore<
   private readonly listeners = new Set<ChangeListener>();
   private selector: ChannelSelector<K, Selected>;
   private equality: ChannelEquality<Selected>;
+  // TEMP DIAGNOSTIC: rapid selection changes (UES loop driver).
+  private diagLastChangedAt?: number;
+  private diagChangeBurst = 0;
+  private diagChangeBurstStart = 0;
 
   constructor(
     private readonly parent: ChannelSnapshotStore<K>,
@@ -112,6 +116,25 @@ export class ChannelSelectionStore<
     this.selected = next;
     this.hasSelection = true;
     if (!notify) return;
+    // TEMP DIAGNOSTIC: detect rapid selection changes (UES loop driver).
+    {
+      const nowMs = performance.now();
+      if (
+        this.diagLastChangedAt !== undefined &&
+        nowMs - this.diagLastChangedAt < 50
+      ) {
+        this.diagChangeBurst += 1;
+      } else {
+        this.diagChangeBurst = 1;
+        this.diagChangeBurstStart = nowMs;
+      }
+      this.diagLastChangedAt = nowMs;
+      if (this.diagChangeBurst === 10) {
+        logger.info(
+          `[ChannelStore:DIAG] ${this.parent.channel}: selection changed 10x with <50ms gaps (started ${this.diagChangeBurstStart})`
+        );
+      }
+    }
     for (const listener of this.listeners) {
       try {
         listener();
@@ -157,9 +180,15 @@ export class ChannelSnapshotStore<K extends ChannelName> {
   private subscribedRateHz?: number;
   private readonly now: () => number;
   private readonly onError: (error: unknown) => void;
+  // TEMP DIAGNOSTIC: track per-channel delivery bursts to correlate with the
+  // renderer-side "maximum update depth" crash at race start.
+  private diagLastDeliveryAt?: number;
+  private diagBurstCount = 0;
+  private diagBurstStart = 0;
+  private diagLoggedBurst = false;
 
   constructor(
-    private readonly channel: K,
+    readonly channel: K,
     private readonly bridge: ChannelBridge,
     options: ChannelSnapshotStoreOptions = {}
   ) {
@@ -208,6 +237,27 @@ export class ChannelSnapshotStore<K extends ChannelName> {
 
   private receive = (snapshot: ChannelPayloads[K]): void => {
     if (this.selections.size === 0) return;
+    // TEMP DIAGNOSTIC: detect delivery bursts per channel.
+    {
+      const nowMs = performance.now();
+      if (
+        this.diagLastDeliveryAt !== undefined &&
+        nowMs - this.diagLastDeliveryAt < 200
+      ) {
+        this.diagBurstCount += 1;
+      } else {
+        this.diagBurstCount = 1;
+        this.diagBurstStart = nowMs;
+        this.diagLoggedBurst = false;
+      }
+      this.diagLastDeliveryAt = nowMs;
+      if (!this.diagLoggedBurst && this.diagBurstCount === 10) {
+        this.diagLoggedBurst = true;
+        logger.info(
+          `[ChannelStore:DIAG] ${this.channel}: 10 deliveries in ${(nowMs - this.diagBurstStart).toFixed(0)}ms (selections=${this.selections.size})`
+        );
+      }
+    }
     this.snapshot = snapshot;
     const now = this.now();
     const definition = channelRegistry[this.channel];
