@@ -6,6 +6,8 @@ import { ErrorBoundary } from '../ErrorBoundary/ErrorBoundary';
 import { VrEditInstructions } from './VrEditInstructions';
 import { PitLapUpdater } from '../OverlayContainer/PitLapUpdater';
 import { PushToPassUpdater } from '../OverlayContainer/PushToPassUpdater';
+import { SessionTimingUpdater } from '../OverlayContainer/SessionTimingUpdater';
+import { SectorTimingUpdater } from '../OverlayContainer/SectorTimingUpdater';
 
 const noop = () => {
   // VR atlas widgets are not draggable; no-op for the required prop.
@@ -26,14 +28,22 @@ export const VrAtlasContainer = memo(() => {
   const [editMode, setEditMode] = useState(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const init = window.__vrEdit;
-  const [livePos, setLivePos] = useState<{ x: number; y: number }>({ x: init?.x ?? 0, y: init?.y ?? 0 });
-  const [livePosCache, setLivePosCache] = useState<Map<string, { x: number; y: number }>>(
-    new Map()
-  );
+  const [livePos, setLivePos] = useState<{ x: number; y: number }>({
+    x: init?.x ?? 0,
+    y: init?.y ?? 0,
+  });
+  const [livePosCache, setLivePosCache] = useState<
+    Map<string, { x: number; y: number }>
+  >(new Map());
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail as { active: boolean; id: string; x: number; y: number };
+      const d = (e as CustomEvent).detail as {
+        active: boolean;
+        id: string;
+        x: number;
+        y: number;
+      };
       setEditMode(d.active);
       setSelectedWidgetId(d.id || null);
       const pos = { x: d.x ?? 0, y: d.y ?? 0 };
@@ -56,16 +66,16 @@ export const VrAtlasContainer = memo(() => {
   const vrWidgets = useMemo(
     () =>
       (currentDashboard?.widgets ?? [])
-        .filter((w) => w.enabled && (w.vrEnabled !== false))
+        .filter((w) => w.enabled && w.vrEnabled !== false)
         .sort((a, b) => a.layout.y - b.layout.y || a.layout.x - b.layout.x),
     [currentDashboard?.widgets]
   );
 
-const atlasWidth = window.innerWidth;
-const MARGIN_X = 200;
+  const atlasWidth = window.innerWidth;
+  const MARGIN_X = 200;
 
-// Shelf-packing with left margin so widgets aren't pinned to the edge.
-const slots = useMemo<AtlasSlot[]>(() => {
+  // Shelf-packing with left margin so widgets aren't pinned to the edge.
+  const slots = useMemo<AtlasSlot[]>(() => {
     const result: AtlasSlot[] = [];
     const padding = 4;
     let fallbackX = MARGIN_X;
@@ -78,18 +88,36 @@ const slots = useMemo<AtlasSlot[]>(() => {
       // During edit mode, use live position for the selected widget.
       const isSelected = editMode && w.id === selectedWidgetId;
       if (isSelected) {
-        result.push({ widgetId: w.id, x: livePos.x, y: livePos.y, width: ww, height: wh });
+        result.push({
+          widgetId: w.id,
+          x: livePos.x,
+          y: livePos.y,
+          width: ww,
+          height: wh,
+        });
         continue;
       }
       // Check the live cache first (positions from this edit session).
       const cached = livePosCache.get(w.id);
       if (cached) {
-        result.push({ widgetId: w.id, x: cached.x, y: cached.y, width: ww, height: wh });
+        result.push({
+          widgetId: w.id,
+          x: cached.x,
+          y: cached.y,
+          width: ww,
+          height: wh,
+        });
         continue;
       }
       // Use saved position if available; otherwise auto-pack with margin.
       if (w.vrAtlasX != null && w.vrAtlasY != null) {
-        result.push({ widgetId: w.id, x: w.vrAtlasX, y: w.vrAtlasY, width: ww, height: wh });
+        result.push({
+          widgetId: w.id,
+          x: w.vrAtlasX,
+          y: w.vrAtlasY,
+          width: ww,
+          height: wh,
+        });
       } else {
         // Auto-pack fallback.
         if (fallbackX + ww > atlasWidth - MARGIN_X && fallbackX > MARGIN_X) {
@@ -97,13 +125,26 @@ const slots = useMemo<AtlasSlot[]>(() => {
           fallbackY += rowH + padding;
           rowH = 0;
         }
-        result.push({ widgetId: w.id, x: fallbackX, y: fallbackY, width: ww, height: wh });
+        result.push({
+          widgetId: w.id,
+          x: fallbackX,
+          y: fallbackY,
+          width: ww,
+          height: wh,
+        });
         fallbackX += ww + padding;
         rowH = Math.max(rowH, wh);
       }
     }
     return result;
-  }, [vrWidgets, livePos, editMode, selectedWidgetId, atlasWidth, livePosCache]);
+  }, [
+    vrWidgets,
+    livePos,
+    editMode,
+    selectedWidgetId,
+    atlasWidth,
+    livePosCache,
+  ]);
 
   // Report the atlas layout to the main process.
   useEffect(() => {
@@ -124,6 +165,8 @@ const slots = useMemo<AtlasSlot[]>(() => {
     <div className="fixed inset-0 overflow-hidden pointer-events-none">
       <PitLapUpdater />
       <PushToPassUpdater />
+      <SessionTimingUpdater />
+      <SectorTimingUpdater />
       {slots.map((slot, index) => {
         const widget = vrWidgets.find((w) => w.id === slot.widgetId);
         if (!widget) return null;
@@ -135,7 +178,12 @@ const slots = useMemo<AtlasSlot[]>(() => {
             key={widget.id}
             widget={{
               ...widget,
-              layout: { x: slot.x, y: slot.y, width: slot.width, height: slot.height },
+              layout: {
+                x: slot.x,
+                y: slot.y,
+                width: slot.width,
+                height: slot.height,
+              },
             }}
             editMode={false}
             zIndex={index + 1}
@@ -146,7 +194,11 @@ const slots = useMemo<AtlasSlot[]>(() => {
                 label={`vr-widget:${widget.type || widget.id}`}
                 resetAfterMs={2000}
               >
-                <div className={isSelected ? 'outline outline-2 outline-green-500' : ''}>
+                <div
+                  className={
+                    isSelected ? 'outline outline-2 outline-green-500' : ''
+                  }
+                >
                   <WidgetComponent {...widget.config} />
                 </div>
               </ErrorBoundary>
