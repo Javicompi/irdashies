@@ -123,7 +123,7 @@ function saveVrEditPositions(): void {
   if (!currentDashboard) return;
   const z = -liveEditZ;
   const vrSettings: VrOverlaySettings = {
-    ...DEFAULT_VR_OVERLAY_SETTINGS,
+    ...currentDashboard.generalSettings?.vr,
     width: currentVrPose?.size?.[0] ?? DEFAULT_POSE.size[0],
     distance: z,
     horizontal: currentVrPose?.position?.[0] ?? 0,
@@ -158,19 +158,6 @@ function toggleVrEditMode(): void {
   vrEditMode = !vrEditMode;
 
   if (vrEditMode) {
-    // Reset all stored positions so the centering logic in VrAtlasContainer
-    // applies fresh. The user re-positions from scratch each edit session.
-    if (currentDashboard) {
-      currentDashboard = {
-        ...currentDashboard,
-        widgets: currentDashboard.widgets.map((w) => ({
-          ...w,
-          vrAtlasX: undefined,
-          vrAtlasY: undefined,
-        })),
-      };
-    }
-
     selectedWidgetIndex = 0;
     selectedWidgetId = atlasLayout[0]?.widgetId ?? null;
     if (selectedWidgetId) {
