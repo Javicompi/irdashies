@@ -140,6 +140,13 @@ export function useFuelCalculation(
   // Use TrackName as primary key to prevent ID collisions
   const trackId = trackName ?? rawTrackId;
 
+  // Get car name reactively for context change detection
+  const currentCarName = useStore(
+    useSessionStore,
+    (state) =>
+      (state.session?.DriverInfo as { DriverCarName?: string })?.DriverCarName
+  );
+
   // Store actions (stable references)
   const updateSessionInfo = useFuelStore((state) => state.updateSessionInfo);
   const clearAllData = useFuelStore((state) => state.clearAllData);
@@ -165,9 +172,11 @@ export function useFuelCalculation(
   // Subscribe to last lap data directly to ensure immediate reactivity
   const storeLastLapUsage = useFuelStore(selectLastLapUsage);
 
-  // Ref to track the currently loaded context (Track + Car) to avoid redundant clears/loads
-
-  const loadedContextRef = useRef<string | null>(null);
+  // Track the currently loaded context (Track + Car) via store to survive disconnect resets
+  const loadedContextKey = useFuelStore((state) => state.loadedContextKey);
+  const setLoadedContextKey = useFuelStore(
+    (state) => state.setLoadedContextKey
+  );
 
   // Refs for smoothing projected lap usage
   const smoothedProjectedUsageRef = useRef<number>(0);
@@ -384,19 +393,13 @@ export function useFuelCalculation(
   }, [lapDistPct]);
 
   useEffect(() => {
-    const currentCarName = (
-      useSessionStore.getState().session?.DriverInfo as {
-        DriverCarName?: string;
-      }
-    )?.DriverCarName;
-
     const currentContext =
       trackId !== undefined && currentCarName !== undefined
         ? `${trackId}:${currentCarName}`
         : null;
 
     const contextChanged =
-      currentContext !== null && currentContext !== loadedContextRef.current;
+      currentContext !== null && currentContext !== loadedContextKey;
 
     if (contextChanged) {
       if (DEBUG_LOGGING) {
@@ -405,13 +408,15 @@ export function useFuelCalculation(
         );
       }
 
-      // Update ref immediately to prevent race conditions from additional renders
-      loadedContextRef.current = currentContext;
-
       // ALWAYS clear current volatile data ONLY when context really changes to prevent leakage
       // This ONLY clears browser memory for the current session, NOT the database historical array.
       clearAllData();
       setQualifyConsumption(null);
+
+      // Set the loaded context key AFTER clearing to prevent a re-evaluation loop:
+      // clearAllData resets loadedContextKey to null, so setting it here ensures
+      // the effect won't re-trigger on the next render with contextChanged=true.
+      setLoadedContextKey(currentContext);
 
       if (settings?.enableStorage ?? true) {
         const [tId, cName] = currentContext.split(':');
@@ -455,10 +460,13 @@ export function useFuelCalculation(
   }, [
     sessionState,
     trackId,
+    currentCarName,
+    loadedContextKey,
     storedTrackId,
     storedCarName,
     clearAllData,
     setContextInfo,
+    setLoadedContextKey,
     setQualifyConsumption,
     settings?.enableStorage,
   ]);
