@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDashboard } from '@irdashies/context';
 import {
   DEFAULT_VR_OVERLAY_SETTINGS,
@@ -35,6 +35,23 @@ export const VrSettings = () => {
   const [layerBusy, setLayerBusy] = useState(false);
   const [layerRequired, setLayerRequired] = useState(false);
 
+  const lastEmitted = useRef('');
+
+  useEffect(() => {
+    const vr = currentDashboard?.generalSettings?.vr;
+    const next = {
+      enabled:
+        vr?.enabled ?? DEFAULT_VR_OVERLAY_SETTINGS.enabled,
+      width: vr?.width ?? DEFAULT_VR_OVERLAY_SETTINGS.width,
+      distance: vr?.distance ?? DEFAULT_VR_OVERLAY_SETTINGS.distance,
+      horizontal:
+        vr?.horizontal ?? DEFAULT_VR_OVERLAY_SETTINGS.horizontal,
+      vertical: vr?.vertical ?? DEFAULT_VR_OVERLAY_SETTINGS.vertical,
+    };
+    if (JSON.stringify(next) === lastEmitted.current) return;
+    setSettings(next);
+  }, [currentDashboard?.generalSettings?.vr]);
+
   const refreshLayerStatus = useCallback(() => {
     if (!window.openxrBridge) {
       setLayerStatus('unknown');
@@ -63,6 +80,7 @@ export const VrSettings = () => {
 
   const update = (partial: Partial<VrOverlaySettings>) => {
     const next = { ...settings, ...partial };
+    lastEmitted.current = JSON.stringify(next);
     setSettings(next);
     const generalSettings: GeneralSettingsType = {
       ...currentDashboard.generalSettings,
