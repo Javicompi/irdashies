@@ -37,6 +37,8 @@ interface FuelStoreState {
   carName?: string;
   /** Accumulated fuel added during the current lap (from pit stops) */
   accumulatedRefuel: number;
+  /** Last loaded context key (trackId:carName) for change detection across disconnects */
+  loadedContextKey: string | null;
 }
 
 interface FuelStoreActions {
@@ -93,6 +95,7 @@ interface FuelStoreActions {
   setQualifyConsumption: (val: number | null) => void;
   setContextInfo: (trackId?: string | number, carName?: string) => void;
   setLapHistory: (laps: FuelLapData[]) => void;
+  setLoadedContextKey: (key: string | null) => void;
 }
 
 type FuelStore = FuelStoreState & FuelStoreActions;
@@ -134,6 +137,7 @@ export const useFuelStore = create<FuelStore>()((set, get) => ({
   accumulatedRefuel: 0,
   trackId: undefined,
   carName: undefined,
+  loadedContextKey: null,
 
   // Actions
   addLapData: (lapData: FuelLapData) => {
@@ -202,6 +206,7 @@ export const useFuelStore = create<FuelStore>()((set, get) => ({
       wasOnPitRoad: false,
       lastSessionFlags: 0,
       accumulatedRefuel: 0,
+      loadedContextKey: null,
       // qualifyConsumption is INTENTIONALLY preservation across session changes
       // It should only be cleared if we detect a track change (handled in useFuelCalculation)
       // or if we decide to add a hard reset button later.
@@ -278,6 +283,10 @@ export const useFuelStore = create<FuelStore>()((set, get) => ({
           laps.length > 0 ? Math.max(...laps.map((l) => l.lapNumber)) : 0,
       };
     });
+  },
+
+  setLoadedContextKey: (key) => {
+    set({ loadedContextKey: key });
   },
 }));
 
