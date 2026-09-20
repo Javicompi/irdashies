@@ -17,6 +17,7 @@ const snapshot = {
   greenFlagTimestamp: 100,
   isFixedLapRace: true,
   totalRaceLaps: 20,
+  leaderRaceLaps: 20,
   totalRaceTime: 2400,
   adjustedRaceTime: 2350,
   sessionNum: 0,
@@ -35,6 +36,7 @@ describe('useSessionTimingStoreUpdater', () => {
       greenFlagTimestamp: 0,
       isFixedLapRace: true,
       totalRaceLaps: 0,
+      leaderRaceLaps: 0,
       totalRaceTime: 0,
       adjustedRaceTime: 0,
     });
@@ -55,6 +57,7 @@ describe('useSessionTimingStoreUpdater', () => {
       greenFlagTimestamp: 100,
       isFixedLapRace: true,
       totalRaceLaps: 20,
+      leaderRaceLaps: 20,
       totalRaceTime: 2400,
       adjustedRaceTime: 2350,
     });

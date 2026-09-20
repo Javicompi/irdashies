@@ -12,6 +12,7 @@ const EMPTY = {
   sessionType: undefined,
   isFixedLapRace: false,
   totalRaceLaps: 0,
+  leaderRaceLaps: 0,
   totalRaceTime: 0,
   adjustedRaceTime: 0,
   sessionNum: null,

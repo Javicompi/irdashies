@@ -198,6 +198,7 @@ export interface SessionTimingSnapshot {
   greenFlagTimestamp: number;
   isFixedLapRace: boolean;
   totalRaceLaps: number;
+  leaderRaceLaps: number;
   totalRaceTime: number;
   adjustedRaceTime: number;
   sessionNum: number | null;

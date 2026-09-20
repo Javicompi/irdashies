@@ -5,6 +5,10 @@ import type {
   Telemetry,
 } from '@irdashies/types';
 import { SessionState } from '@irdashies/types';
+import {
+  calculateRaceProjection,
+  type RaceProjectionInput,
+} from '@irdashies/shared';
 import type { TelemetryProcessor } from './TelemetryProcessor';
 
 const UPDATE_INTERVAL_SECONDS = 0.2;
@@ -36,6 +40,7 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
   private previousSessionState: number | null = null;
   private previousLeaderLap: number | null = null;
   private greenFlagTimestamp: number | null = null;
+  private lastLeaderRaceLaps = 0;
   private checkeredLap: number | null = null;
   private lateJoin = false;
   private enabled = true;
@@ -116,7 +121,11 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
       typeof sessionInfo?.SessionLaps === 'number'
         ? sessionInfo.SessionLaps
         : 0;
-    const fixedLapRace = !(timeRemaining > 0 && timeRemaining !== 604800);
+    // Fixed-lap race = SessionLaps is a number > 0. Timed races report
+    // "unlimited" -> 0. Deliberately NOT derived from timeRemaining: when the
+    // clock hits 0 at the end of a timed race, timeRemaining becomes 0 and a
+    // timeRemaining-based check wrongly flips to "fixed-lap".
+    const fixedLapRace = totalLaps > 0;
     const displayLap =
       state >= SessionState.Checkered
         ? (this.checkeredLap ?? currentLap)
@@ -125,6 +134,7 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
       frame,
       sessionType,
       state,
+      sessionTime,
       focusCarIdx,
       displayLap,
       leaderCarIdx,
@@ -135,6 +145,9 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
       timeTotal,
       fixedLapRace
     );
+    if (raceValues.leaderRaceLaps > 0) {
+      this.lastLeaderRaceLaps = raceValues.leaderRaceLaps;
+    }
 
     this.latest = {
       sessionType,
@@ -216,6 +229,7 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
     frame: Telemetry,
     sessionType: string | undefined,
     state: number,
+    sessionTime: number,
     focusCarIdx: number | null,
     currentLap: number,
     leaderCarIdx: number,
@@ -227,50 +241,51 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
     fixedLapRace: boolean
   ): Pick<
     SessionTimingSnapshot,
-    'totalRaceLaps' | 'totalRaceTime' | 'adjustedRaceTime'
+    'totalRaceLaps' | 'leaderRaceLaps' | 'totalRaceTime' | 'adjustedRaceTime'
   > {
-    let totalRaceLaps = 0;
-    let totalRaceTime = 0;
-    let adjustedRaceTime = 0;
-
+    // Canonical projection (src/shared/race-projection): timed races estimate
+    // the focus car's total laps from when the overall leader takes the
+    // checkered flag, at each car's own clean on-track pace. This keeps the
+    // SessionBar lap counter, the fuel calculator and the title progress bar
+    // on the same value, including multi-class timed races.
     const lapDistPct = numberValue(frame, 'LapDistPct') ?? 0;
     const focusBestLap = finiteAt(
       numberArray(frame, 'CarIdxBestLapTime'),
       focusCarIdx
     );
-    const averageLapTime =
-      this.averageLapTime(leaderCarIdx >= 0 ? leaderCarIdx : focusCarIdx) ||
-      focusBestLap;
-    const lapsValid = currentLap > 0 && leaderLap > 0;
-    if (fixedLapRace) {
-      totalRaceLaps = totalLaps;
-      if (lapsValid) {
-        totalRaceLaps -= Math.max(
-          0,
-          Math.floor(leaderLap + leaderLapDistPct - (currentLap + lapDistPct))
-        );
-      }
-      if (averageLapTime > 0) {
-        totalRaceTime = totalLaps * averageLapTime;
-        adjustedRaceTime = totalRaceLaps * averageLapTime;
-      }
-    } else {
-      totalRaceTime = timeTotal;
-      if (averageLapTime > 0) {
-        totalRaceLaps =
-          currentLap === 0
-            ? timeTotal / averageLapTime
-            : timeRemaining / averageLapTime +
-              (leaderLap - 1) +
-              leaderLapDistPct;
-        if (leaderLap > currentLap + 1) {
-          totalRaceLaps -= Math.floor(leaderLap - currentLap);
-        }
-        if (totalLaps > 0) totalRaceLaps = Math.min(totalRaceLaps, totalLaps);
-      }
-    }
-    if (state >= SessionState.Checkered) totalRaceLaps = currentLap;
-    return { totalRaceLaps, totalRaceTime, adjustedRaceTime };
+    const paceCarIdx = leaderCarIdx >= 0 ? leaderCarIdx : focusCarIdx;
+    const leaderAvgLapTime = this.averageLapTime(paceCarIdx) || focusBestLap;
+    const playerAvgLapTime = this.averageLapTime(focusCarIdx) || focusBestLap;
+    const leaderPace = this.averageLapTime(paceCarIdx);
+    const playerPace = this.averageLapTime(focusCarIdx);
+
+    const leaderDist = leaderLap > 0 ? leaderLap - 1 + leaderLapDistPct : 0;
+    const playerDist = currentLap > 0 ? currentLap - 1 + lapDistPct : 0;
+    const elapsed = sessionTime - (this.greenFlagTimestamp ?? 0);
+
+    const input: RaceProjectionInput = {
+      sessionType,
+      state,
+      isFixedLapRace: fixedLapRace,
+      totalLaps,
+      timeRemaining,
+      timeTotal,
+      elapsed,
+      playerLap: currentLap,
+      playerLapDistPct: lapDistPct,
+      leaderLap,
+      leaderLapDistPct,
+      leaderPace,
+      playerPace,
+      leaderPaceWall: elapsed > 0 && leaderDist > 0 ? elapsed / leaderDist : 0,
+      playerPaceWall: elapsed > 0 && playerDist > 0 ? elapsed / playerDist : 0,
+      leaderAvgLapTime,
+      playerAvgLapTime,
+      lastLeaderRaceLaps: this.lastLeaderRaceLaps,
+    };
+    const { totalRaceLaps, leaderRaceLaps, totalRaceTime, adjustedRaceTime } =
+      calculateRaceProjection(input);
+    return { totalRaceLaps, leaderRaceLaps, totalRaceTime, adjustedRaceTime };
   }
 
   private averageLapTime(carIdx: number | null): number {
@@ -290,6 +305,7 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
     this.previousSessionState = null;
     this.previousLeaderLap = null;
     this.greenFlagTimestamp = null;
+    this.lastLeaderRaceLaps = 0;
     this.checkeredLap = null;
     this.lateJoin = false;
     this.latest = { ...this.emptySnapshot(), sessionNum, version };
@@ -306,6 +322,7 @@ export class SessionTimingProcessor implements TelemetryProcessor<SessionTimingS
       greenFlagTimestamp: 0,
       isFixedLapRace: true,
       totalRaceLaps: 0,
+      leaderRaceLaps: 0,
       totalRaceTime: 0,
       adjustedRaceTime: 0,
       sessionNum: null,

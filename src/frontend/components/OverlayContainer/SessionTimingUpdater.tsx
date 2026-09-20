@@ -1,6 +1,13 @@
 import { useDashboard, SessionTimingStoreUpdater } from '@irdashies/context';
 
-const SESSION_TIMING_WIDGET_IDS = new Set(['standings', 'relative', 'infobar']);
+// Fuel reads the same canonical totals via useTotalRaceValue, so a Fuel-only
+// dashboard must also subscribe to the session-timing channel.
+const SESSION_TIMING_WIDGET_IDS = new Set([
+  'standings',
+  'relative',
+  'infobar',
+  'fuel',
+]);
 
 export const SessionTimingUpdater = () => {
   const { currentDashboard } = useDashboard();

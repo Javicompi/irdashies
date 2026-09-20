@@ -50,6 +50,7 @@ const meta: Meta = {
         greenFlagTimestamp: 0,
         isFixedLapRace: true,
         totalRaceLaps: 20,
+        leaderRaceLaps: 20,
         totalRaceTime: 2400,
         adjustedRaceTime: 2400,
         sessionNum: 0,

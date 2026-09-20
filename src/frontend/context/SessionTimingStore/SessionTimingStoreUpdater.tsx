@@ -20,6 +20,7 @@ export const useSessionTimingStoreUpdater = (enabled: boolean) => {
       greenFlagTimestamp: snapshot.greenFlagTimestamp,
       isFixedLapRace: snapshot.isFixedLapRace,
       totalRaceLaps: snapshot.totalRaceLaps,
+      leaderRaceLaps: snapshot.leaderRaceLaps,
       totalRaceTime: snapshot.totalRaceTime,
       adjustedRaceTime: snapshot.adjustedRaceTime,
     });

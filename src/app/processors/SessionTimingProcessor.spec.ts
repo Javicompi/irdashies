@@ -82,6 +82,128 @@ describe('SessionTimingProcessor', () => {
     expect(processor.snapshot().totalRaceLaps).toBe(3);
   });
 
+  it('projects timed multi-class totals from the overall leader pace', () => {
+    // Timed 2h race: overall leader (faster class, car 0) 115.13s pace,
+    // focus car (slower class, car 1) 134.0s pace. Canonical projection:
+    // timeToCompleteCurrentLap=(1-0.26)*115.13=85.2 < remain=200
+    // lapsUntilCheckered=1, leaderRemainingTime=200.33
+    // playerTotalLaps=52.203+200.33/134=53.70
+    const timedSession = {
+      DriverInfo: {
+        DriverCarIdx: 1,
+        Drivers: [{ CarIdx: 0 }, { CarIdx: 1 }],
+      },
+      SessionInfo: {
+        Sessions: [
+          { SessionNum: 0, SessionType: 'Race', SessionLaps: 'unlimited' },
+        ],
+      },
+    } as unknown as Session;
+    const processor = new SessionTimingProcessor(() => [115.13, 134.0]);
+    processor.init(timedSession);
+    processor.onFrame(
+      frame({
+        SessionTime: 0,
+        SessionState: SessionState.Warmup,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 7200,
+        CarIdxLap: [1, 1],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0, 0],
+        LapDistPct: 0,
+      })
+    );
+    processor.onFrame(
+      frame({
+        SessionTime: 0.3,
+        SessionState: SessionState.Racing,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 7199.7,
+        CamCarIdx: 1,
+        LapDistPct: 0,
+        CarIdxLap: [1, 1],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0, 0],
+      })
+    );
+    processor.onFrame(
+      frame({
+        SessionTime: 7000,
+        SessionState: SessionState.Racing,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 200,
+        CamCarIdx: 1,
+        LapDistPct: 0.203,
+        CarIdxLap: [61, 53],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0.26, 0.203],
+      })
+    );
+    const snapshot = processor.snapshot();
+    expect(snapshot.isFixedLapRace).toBe(false);
+    expect(snapshot.totalRaceLaps).toBeCloseTo(53.7, 1);
+    expect(snapshot.leaderRaceLaps).toBeCloseTo(62.0, 1);
+  });
+
+  it('timed race with the clock at 0 is not treated as fixed-lap', () => {
+    const timedSession = {
+      DriverInfo: {
+        DriverCarIdx: 1,
+        Drivers: [{ CarIdx: 0 }, { CarIdx: 1 }],
+      },
+      SessionInfo: {
+        Sessions: [
+          { SessionNum: 0, SessionType: 'Race', SessionLaps: 'unlimited' },
+        ],
+      },
+    } as unknown as Session;
+    const processor = new SessionTimingProcessor(() => [115.13, 134.0]);
+    processor.init(timedSession);
+    processor.onFrame(
+      frame({
+        SessionTime: 0,
+        SessionState: SessionState.Warmup,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 7200,
+        CarIdxLap: [1, 1],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0, 0],
+        LapDistPct: 0,
+      })
+    );
+    processor.onFrame(
+      frame({
+        SessionTime: 0.3,
+        SessionState: SessionState.Racing,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 7199.7,
+        CamCarIdx: 1,
+        LapDistPct: 0,
+        CarIdxLap: [1, 1],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0, 0],
+      })
+    );
+    processor.onFrame(
+      frame({
+        SessionTime: 7457,
+        SessionState: SessionState.Racing,
+        SessionTimeTotal: 7200,
+        SessionTimeRemain: 0,
+        CamCarIdx: 1,
+        LapDistPct: 0.203,
+        CarIdxLap: [61, 53],
+        CarIdxPosition: [1, 2],
+        CarIdxLapDistPct: [0.26, 0.203],
+      })
+    );
+    const snapshot = processor.snapshot();
+    expect(snapshot.isFixedLapRace).toBe(false);
+    // leaderRemainingTime=(1-0.26)*115.13=85.2, 52.203+85.2/134=52.84
+    expect(snapshot.totalRaceLaps).toBeCloseTo(52.8, 1);
+    expect(snapshot.leaderRaceLaps).toBeCloseTo(60.3, 1);
+  });
+
   it('resets on session changes and ignores replay scrubbing', () => {
     const processor = new SessionTimingProcessor();
     processor.init(session);

@@ -13,6 +13,7 @@ interface SessionTimingData {
   greenFlagTimestamp: number;
   isFixedLapRace: boolean;
   totalRaceLaps: number;
+  leaderRaceLaps: number;
   totalRaceTime: number;
   adjustedRaceTime: number;
 }
@@ -32,6 +33,7 @@ export const useSessionTimingStore = create<SessionTimingState>((set) => ({
   greenFlagTimestamp: 0,
   isFixedLapRace: true,
   totalRaceLaps: 0,
+  leaderRaceLaps: 0,
   totalRaceTime: 0,
   adjustedRaceTime: 0,
 
@@ -67,6 +69,7 @@ export const useSessionLapsTiming = () =>
       totalLaps: s.totalLaps,
       state: s.state,
       totalRaceLaps: s.totalRaceLaps,
+      leaderRaceLaps: s.leaderRaceLaps,
       isFixedLapRace: s.isFixedLapRace,
     }),
     shallow

@@ -13,6 +13,7 @@ describe('SessionTimingStore', () => {
       greenFlagTimestamp: 0,
       isFixedLapRace: true,
       totalRaceLaps: 0,
+      leaderRaceLaps: 0,
       totalRaceTime: 0,
       adjustedRaceTime: 0,
     });
@@ -30,6 +31,7 @@ describe('SessionTimingStore', () => {
     // useTotalRaceValue: !((0 > 0) && (0 !== 604800)) === true
     expect(state.isFixedLapRace).toBe(true);
     expect(state.totalRaceLaps).toBe(0);
+    expect(state.leaderRaceLaps).toBe(0);
     expect(state.totalRaceTime).toBe(0);
     expect(state.adjustedRaceTime).toBe(0);
   });
@@ -45,6 +47,7 @@ describe('SessionTimingStore', () => {
       greenFlagTimestamp: 100,
       isFixedLapRace: true,
       totalRaceLaps: 20,
+      leaderRaceLaps: 21,
       totalRaceTime: 2400,
       adjustedRaceTime: 2350,
     });
@@ -59,6 +62,7 @@ describe('SessionTimingStore', () => {
       greenFlagTimestamp: 100,
       isFixedLapRace: true,
       totalRaceLaps: 20,
+      leaderRaceLaps: 21,
       totalRaceTime: 2400,
       adjustedRaceTime: 2350,
     });
